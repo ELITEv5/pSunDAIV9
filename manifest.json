@@ -1,0 +1,36 @@
+{
+  "name": "pSunDAI V9 — PulseChain CDP",
+  "short_name": "pSunDAI V9",
+  "description": "Autonomous, ownerless, immutable CDP on PulseChain. Mint pSunDAI against PLS collateral. V9: fixed clearBadDebt and spot-liquidation exploits, added a Stability Pool with real yield.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0b08",
+  "theme_color": "#f5c842",
+  "orientation": "portrait-primary",
+  "lang": "en",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "sundailogo.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Vault Dashboard",
+      "short_name": "Liquidations",
+      "description": "Scan and liquidate undercollateralized vaults",
+      "url": "./liquidations.html",
+      "icons": [{ "src": "favicon.svg", "sizes": "any" }]
+    }
+  ]
+}

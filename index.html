@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pSunDAI V9 — PulseChain CDP</title>
+<meta name="description" content="Autonomous, ownerless, immutable CDP on PulseChain. Mint pSunDAI against PLS collateral. V9: fixed clearBadDebt and spot-liquidation exploits, added a Stability Pool with real yield.">
+<meta name="theme-color" content="#f5c842">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="pSunDAI">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="sundailogo.png">
+<link rel="manifest" href="manifest.json">
+<script src="ethers.umd.min.js"></script>
+<style>
+  :root {
+    --gold:    #f5c842;
+    --amber:   #e8a020;
+    --ember:   #c96a10;
+    --bg:      #0d0b08;
+    --surface: #17140e;
+    --panel:   #1f1a12;
+    --border:  #2e2515;
+    --text:    #f0e8d0;
+    --muted:   #8a7a5a;
+    --safe:    #4caf50;
+    --warn:    #ff9800;
+    --danger:  #f44336;
+    --info:    #2196f3;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 15px; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  canvas#bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+  /* ── NAV ─────────────────────────────────────────────────────────── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px;
+    background: rgba(13,11,8,.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { height: 38px; }
+  .brand { font-size: 1.2rem; font-weight: 700; color: var(--gold); }
+  .badge {
+    font-size: .7rem; font-weight: 700; letter-spacing: .08em;
+    padding: 2px 8px; border-radius: 20px;
+    background: linear-gradient(135deg, var(--amber), var(--ember));
+    color: #fff;
+  }
+  nav .spacer { flex: 1; }
+  #walletBtn {
+    padding: 7px 18px; border-radius: 8px; border: 1px solid var(--amber);
+    background: rgba(245,200,66,.1); color: var(--gold); cursor: pointer; font-size: .85rem;
+    font-weight: 600; transition: background .2s;
+  }
+  #walletBtn:hover { background: rgba(245,200,66,.22); }
+  nav a.liq-link {
+    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border);
+    color: var(--muted); text-decoration: none; font-size: .85rem;
+    transition: color .2s, border-color .2s;
+  }
+  nav a.liq-link:hover { color: var(--gold); border-color: var(--amber); }
+
+  /* ── ORACLE BAR ──────────────────────────────────────────────────── */
+  #oracleBar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 20px;
+    font-size: .78rem; color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    background: rgba(13,11,8,.7);
+  }
+  .ob-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .ob-dot.green { background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+  .ob-dot.amber { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+  .ob-dot.red   { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+  #oracleBar .ob-label { font-weight: 600; color: var(--text); }
+  #oracleBar .ob-price { font-family: monospace; color: var(--gold); }
+
+  /* ── LAYOUT ──────────────────────────────────────────────────────── */
+  main {
+    position: relative; z-index: 1;
+    max-width: 1100px; margin: 0 auto;
+    padding: 24px 16px;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+  }
+  @media(max-width:860px) { main { grid-template-columns: 1fr; } }
+  @media(max-width:520px) {
+    nav { padding: 8px 12px; gap: 8px; }
+    .brand { font-size: 1rem; }
+    nav a.liq-link { display: none; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .tool-input-row { flex-wrap: wrap; }
+    .tool-input-row input { flex: 1 1 100%; }
+    .tool-input-row .tool-btn { width: 100%; }
+  }
+
+  /* ── PANELS ──────────────────────────────────────────────────────── */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .panel-title {
+    font-size: .75rem; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--amber); margin-bottom: 14px;
+  }
+
+  /* ── ORACLE PANEL ────────────────────────────────────────────────── */
+  .oracle-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-bottom: 14px;
+  }
+  .oracle-item { background: var(--surface); border-radius: 8px; padding: 10px 14px; }
+  .oracle-item .label { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
+  .oracle-item .val { font-size: 1.05rem; font-family: monospace; font-weight: 600; }
+  .oracle-item .val.gold { color: var(--gold); }
+  .oracle-item .val.amber { color: var(--amber); }
+  .oracle-item .sub { font-size: .68rem; color: var(--muted); margin-top: 3px; }
+  .conf-row { font-size: .78rem; color: var(--muted); margin-bottom: 8px; }
+  .conf-row span { color: var(--amber); }
+
+  /* ── SPOT WARNING BANNER ─────────────────────────────────────────── */
+  #spotWarnBanner {
+    display: none; border-radius: 8px; padding: 10px 14px;
+    margin-bottom: 14px; font-size: .82rem;
+  }
+  #spotWarnBanner.warn {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,152,0,.12); border: 1px solid rgba(255,152,0,.4);
+    color: var(--warn);
+  }
+  #spotWarnBanner.danger {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(244,67,54,.12); border: 1px solid rgba(244,67,54,.4);
+    color: var(--danger);
+  }
+  .pulse-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .pulse-dot.amber { background: var(--warn); }
+  .pulse-dot.red   { background: var(--danger); }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .5; transform: scale(.75); }
+  }
+
+  /* ── VAULT STATS ─────────────────────────────────────────────────── */
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 10px; margin-bottom: 16px;
+  }
+  .stat-box {
+    background: var(--surface); border-radius: 8px; padding: 12px;
+    text-align: center;
+  }
+  .stat-box .s-label { font-size: .68rem; color: var(--muted); margin-bottom: 4px; }
+  .stat-box .s-val { font-size: 1rem; font-weight: 700; font-family: monospace; }
+  .s-val.safe   { color: var(--safe); }
+  .s-val.warn   { color: var(--warn); }
+  .s-val.danger { color: var(--danger); }
+  .s-val.gold   { color: var(--gold); }
+
+  .cr-bar-wrap { margin-bottom: 16px; }
+  .cr-bar-label { display: flex; justify-content: space-between; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+  .cr-bar-track { height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+  .cr-bar-fill { height: 100%; border-radius: 3px; transition: width .5s, background .5s; }
+
+  /* ── TABS ────────────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab-btn {
+    padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); cursor: pointer; font-size: .83rem;
+    font-weight: 500; transition: all .2s;
+  }
+  .tab-btn:hover:not(.active) { border-color: var(--amber); color: var(--gold); }
+  .tab-btn.active {
+    background: linear-gradient(135deg, rgba(245,200,66,.2), rgba(200,106,16,.2));
+    border-color: var(--amber); color: var(--gold); font-weight: 700;
+  }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── FORM ELEMENTS ───────────────────────────────────────────────── */
+  label { font-size: .78rem; color: var(--muted); display: block; margin-bottom: 5px; }
+  .input-wrap { position: relative; margin-bottom: 12px; }
+  input[type=number], input[type=text] {
+    width: 100%; padding: 10px 14px; border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); font-size: .95rem;
+    outline: none; transition: border-color .2s;
+  }
+  input:focus { border-color: var(--amber); }
+  .input-unit {
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    font-size: .8rem; color: var(--muted); pointer-events: none;
+  }
+  .max-btn {
+    position: absolute; right: 52px; top: 50%; transform: translateY(-50%);
+    font-size: .68rem; padding: 2px 7px; border-radius: 4px; white-space: nowrap;
+    background: rgba(245,200,66,.15); border: 1px solid rgba(245,200,66,.3);
+    color: var(--gold); cursor: pointer; font-weight: 600;
+    transition: background .15s;
+  }
+  .max-btn:hover { background: rgba(245,200,66,.28); }
+  .hint { font-size: .73rem; color: var(--muted); margin-bottom: 12px; }
+  .hint span { color: var(--amber); }
+
+  .btn {
+    width: 100%; padding: 12px; border-radius: 10px; border: none;
+    font-size: 1rem; font-weight: 700; cursor: pointer; transition: all .2s;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--amber), var(--ember));
+    color: #fff;
+  }
+  .btn-primary:hover { filter: brightness(1.15); }
+  .btn-secondary {
+    background: rgba(245,200,66,.07); border: 1px solid var(--amber);
+    color: var(--gold); margin-top: 8px;
+  }
+  .btn-secondary:hover { background: rgba(245,200,66,.18); }
+  .btn-secondary:active { background: rgba(245,200,66,.25); }
+  .btn-exit {
+    background: rgba(200,106,16,.1); border: 1px solid var(--ember);
+    color: #e8a020; margin-top: 8px;
+  }
+  .btn-exit:hover { background: rgba(200,106,16,.2); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+  .action-sep { text-align:center; font-size:.7rem; color:var(--muted); margin: 10px 0 2px; }
+
+  /* ── AUTO TAB ────────────────────────────────────────────────────── */
+  .auto-info {
+    background: rgba(245,200,66,.06); border: 1px solid rgba(245,200,66,.2);
+    border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+  .auto-info p { font-size: .82rem; color: var(--muted); line-height: 1.5; }
+  .auto-info .preview { font-size: .9rem; color: var(--gold); margin-top: 8px; }
+
+  /* ── VERIFIED CONTRACTS ─────────────────────────────────────────── */
+  .ctr-block { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .ctr-block:last-of-type { border-bottom: none; margin-bottom: 10px; }
+  .ctr-name { font-size: .68rem; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .07em; }
+  .ctr-addr { font-family: monospace; font-size: .72rem; color: var(--amber); word-break: break-all; margin-bottom: 5px; line-height: 1.45; }
+  .ctr-links { display: flex; gap: 8px; align-items: center; }
+  .cr-copy { padding: 2px 9px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; font-size: .68rem; transition: all .15s; }
+  .cr-copy:hover { border-color: var(--amber); color: var(--gold); }
+  .cr-scan { font-size: .72rem; color: var(--info); text-decoration: none; }
+  .cr-scan:hover { text-decoration: underline; }
+  .trust-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  .trust-badge { font-size: .63rem; padding: 2px 7px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
+
+  /* ── FOOTER ──────────────────────────────────────────────────────── */
+  footer { text-align: center; padding: 16px 16px 30px; font-size: .75rem; color: var(--muted); border-top: 1px solid var(--border); position: relative; z-index: 1; }
+  .footer-links { margin-bottom: 6px; }
+  .footer-links a { color: var(--muted); text-decoration: none; margin: 0 8px; }
+  .footer-links a:hover { color: var(--gold); }
+  .footer-trust { font-size: .68rem; color: rgba(138,122,90,.38); letter-spacing: .04em; line-height: 1.9; }
+
+  /* ── SIDE COLUMN ─────────────────────────────────────────────────── */
+  .side-col { display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── SYSTEM STATE ────────────────────────────────────────────────── */
+  .sys-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: .85rem; }
+  .sys-row:last-child { border-bottom: none; }
+  .sys-row .sr-key { color: var(--muted); }
+  .sys-row .sr-val { font-family: monospace; color: var(--text); }
+  .sys-row .sr-val.green { color: var(--safe); }
+  .sys-row .sr-val.amber { color: var(--amber); }
+  .sys-row .sr-val.red   { color: var(--danger); }
+
+  .util-bar-wrap { margin-top: 10px; }
+  .util-bar-label { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); margin-bottom: 5px; }
+  .util-bar-track { height: 5px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+  .util-bar-fill { height: 100%; border-radius: 3px; transition: width .5s; }
+
+  /* ── PROTOCOL TOOLS ──────────────────────────────────────────────── */
+  .tool-item { margin-bottom: 12px; }
+  .tool-item:last-child { margin-bottom: 0; }
+  .tool-desc { font-size: .75rem; color: var(--muted); margin-bottom: 6px; line-height: 1.45; }
+  .tool-btn {
+    width: 100%; padding: 10px 14px; border-radius: 8px;
+    border: 1px solid var(--amber);
+    background: rgba(245,200,66,.08);
+    color: var(--gold); cursor: pointer; font-size: .85rem; font-weight: 600;
+    text-align: center; transition: background .2s;
+  }
+  .tool-btn:hover { background: rgba(245,200,66,.18); }
+  .tool-input-row { display: flex; gap: 8px; }
+  .tool-input-row input { flex: 1; padding: 9px 10px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: .82rem; outline: none; }
+  .tool-input-row input:focus { border-color: var(--amber); }
+  .tool-input-row .tool-btn { width: auto; padding: 9px 16px; font-size: .82rem; }
+  .tool-input-col { display: flex; flex-direction: column; gap: 6px; }
+
+  /* ── VAULT HEALTH BANNER ─────────────────────────────────────────── */
+  #vaultHealthBanner { display:none; border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  #vaultHealthBanner.vhb-new    { display:block; background:rgba(245,200,66,.07); border:1px solid rgba(245,200,66,.25); }
+  #vaultHealthBanner.vhb-good   { display:block; background:rgba(76,175,80,.07); border:1px solid rgba(76,175,80,.2); }
+  #vaultHealthBanner.vhb-ok     { display:block; background:rgba(76,175,80,.04); border:1px solid rgba(76,175,80,.12); }
+  #vaultHealthBanner.vhb-warn   { display:block; background:rgba(255,152,0,.1); border:1px solid rgba(255,152,0,.4); }
+  #vaultHealthBanner.vhb-danger { display:block; background:rgba(244,67,54,.1); border:1px solid rgba(244,67,54,.45); }
+  .vhb-title { font-size:.92rem; font-weight:700; margin-bottom:4px; }
+  .vhb-new .vhb-title    { color:var(--gold); }
+  .vhb-good .vhb-title   { color:var(--safe); }
+  .vhb-ok .vhb-title     { color:var(--safe); }
+  .vhb-warn .vhb-title   { color:var(--warn); }
+  .vhb-danger .vhb-title { color:var(--danger); }
+  .vhb-text { font-size:.8rem; color:var(--muted); line-height:1.55; }
+  .vhb-text strong { color:var(--text); }
+  .vhb-action {
+    margin-top:10px; padding:8px 18px; border-radius:7px;
+    font-size:.84rem; font-weight:700; cursor:pointer; border:none;
+    display:inline-block; transition:filter .2s;
+  }
+  .vhb-action:hover { filter:brightness(1.15); }
+  .vhb-new .vhb-action    { background:linear-gradient(135deg,var(--amber),var(--ember)); color:#fff; }
+  .vhb-warn .vhb-action   { background:rgba(255,152,0,.18); border:1px solid var(--warn)!important; color:var(--warn); }
+  .vhb-danger .vhb-action { background:rgba(244,67,54,.18); border:1px solid var(--danger)!important; color:var(--danger); }
+
+  /* ── STABILITY POOL PANEL ────────────────────────────────────────── */
+  .sp-highlight {
+    background: rgba(76,175,80,.06); border: 1px solid rgba(76,175,80,.25);
+    border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+  .sp-highlight p { font-size: .82rem; color: var(--muted); line-height: 1.5; }
+
+  /* ── DETAILS (collapsible panels) ────────────────────────────────── */
+  details > summary { list-style:none; cursor:pointer; user-select:none; }
+  details > summary::-webkit-details-marker { display:none; }
+  details > summary .chevron { display:inline-block; transition:transform .2s; font-style:normal; margin-left:4px; }
+  details[open] > summary .chevron { transform:rotate(90deg); }
+
+  /* ── STATUS MESSAGES ─────────────────────────────────────────────── */
+  #statusMsg {
+    margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+    font-size: .82rem; display: none;
+  }
+  #statusMsg.ok   { display: block; background: rgba(76,175,80,.12); border: 1px solid rgba(76,175,80,.3); color: var(--safe); }
+  #statusMsg.err  { display: block; background: rgba(244,67,54,.12); border: 1px solid rgba(244,67,54,.3); color: var(--danger); }
+  #statusMsg.wait { display: block; background: rgba(33,150,243,.1); border: 1px solid rgba(33,150,243,.3); color: var(--info); }
+
+  #spStatusMsg {
+    margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+    font-size: .82rem; display: none;
+  }
+  #spStatusMsg.ok   { display: block; background: rgba(76,175,80,.12); border: 1px solid rgba(76,175,80,.3); color: var(--safe); }
+  #spStatusMsg.err  { display: block; background: rgba(244,67,54,.12); border: 1px solid rgba(244,67,54,.3); color: var(--danger); }
+  #spStatusMsg.wait { display: block; background: rgba(33,150,243,.1); border: 1px solid rgba(33,150,243,.3); color: var(--info); }
+
+  /* ── MODAL ───────────────────────────────────────────────────────── */
+  #modal {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,.7); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  #modal.open { display: flex; }
+  .modal-box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    max-width: 640px; width: 100%; max-height: 80vh; overflow-y: auto; padding: 28px;
+  }
+  .modal-box h2 { color: var(--gold); margin-bottom: 18px; font-size: 1.2rem; }
+  .modal-box h3 { color: var(--amber); margin: 18px 0 8px; font-size: .95rem; }
+  .modal-box p { color: var(--muted); font-size: .83rem; line-height: 1.6; margin-bottom: 8px; }
+  .modal-box ul { color: var(--muted); font-size: .83rem; line-height: 1.7; padding-left: 18px; }
+  .modal-close {
+    float: right; background: rgba(255,255,255,.04); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; border-radius: 6px; padding: 4px 12px;
+    transition: all .2s;
+  }
+  .modal-close:hover { border-color: var(--amber); color: var(--gold); background: rgba(245,200,66,.08); }
+  .help-btn {
+    background: rgba(245,200,66,.1); border: 1px solid var(--amber);
+    color: var(--gold); font-weight: 600;
+    cursor: pointer; border-radius: 6px; padding: 6px 14px; font-size: .8rem;
+    transition: background .2s;
+  }
+  .help-btn:hover { background: rgba(245,200,66,.2); }
+
+  /* ── SCROLLBAR ───────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<!-- NAV -->
+<nav>
+  <img src="sundailogo.png" alt="SunDAI" class="logo">
+  <span class="brand">pSunDAI</span>
+  <span class="badge">PLS V9</span>
+  <div class="spacer"></div>
+  <button class="help-btn" onclick="document.getElementById('modal').classList.add('open')">How it works</button>
+  <a href="liquidations.html" class="liq-link">Vault Dashboard</a>
+  <button id="walletBtn" onclick="connectWallet()">Connect Wallet</button>
+</nav>
+
+<!-- ORACLE BAR -->
+<div id="oracleBar">
+  <div class="ob-dot" id="obDot"></div>
+  <span id="obLabel" class="ob-label">Oracle</span>
+  <span id="obPrice" class="ob-price">—</span>
+  <span style="margin-left:6px" id="obSub"></span>
+</div>
+
+<!-- MAIN -->
+<main>
+  <!-- LEFT COLUMN -->
+  <div>
+    <!-- ORACLE PANEL -->
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-title">Oracle Status — PulseX 5-Pool Liquidity-Weighted TWAP</div>
+
+      <div class="oracle-grid">
+        <div class="oracle-item">
+          <div class="label">TWAP (Conservative)</div>
+          <div class="val gold" id="oTwap">—</div>
+          <div class="sub">Used for mint / withdraw safety</div>
+        </div>
+        <div class="oracle-item">
+          <div class="label">Spot Median (5-Pool)</div>
+          <div class="val amber" id="oSpot">—</div>
+          <div class="sub" id="oSpotSub">PulseX real-time</div>
+        </div>
+        <div class="oracle-item">
+          <div class="label">TWAP vs Spot Divergence</div>
+          <div class="val" id="oDivergence">—</div>
+          <div class="sub" id="oDivSub">—</div>
+        </div>
+        <div class="oracle-item">
+          <div class="label">Oracle State</div>
+          <div class="val" id="oState">—</div>
+          <div class="sub" id="oStateSub">—</div>
+        </div>
+      </div>
+
+      <div class="conf-row" id="oConfRow" style="display:none">
+        Confirmation in progress → target <span id="oTarget">—</span>, time remaining <span id="oConfTime">—</span>
+      </div>
+
+      <!-- SPOT WARNING BANNER -->
+      <div id="spotWarnBanner">
+        <div class="pulse-dot" id="warnDot"></div>
+        <div id="warnText"></div>
+      </div>
+    </div>
+
+    <!-- VAULT PANEL -->
+    <div class="panel" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="panel-title" style="margin:0">Your Vault</div>
+        <span id="connectedAddr" style="font-size:.72rem;color:var(--muted)"></span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="s-label">Collateral (PLS)</div>
+          <div class="s-val gold" id="sColl">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Debt (pSunDAI)</div>
+          <div class="s-val amber" id="sDebt">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Collateral Value</div>
+          <div class="s-val gold" id="sColUSD">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">pSunDAI Balance</div>
+          <div class="s-val" id="sBalance">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Available to Borrow</div>
+          <div class="s-val" id="sMintable">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Repay to be Safe</div>
+          <div class="s-val" id="sRepayToSafe">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Vault Cap (V9)</div>
+          <div class="s-val" id="sVaultCap">—</div>
+        </div>
+      </div>
+
+      <div class="cr-bar-wrap">
+        <div class="cr-bar-label">
+          <span>Collateral Ratio</span>
+          <span id="sCR">—</span>
+        </div>
+        <div class="cr-bar-track">
+          <div class="cr-bar-fill" id="crFill" style="width:0%;background:var(--safe)"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-top:4px">
+          <span style="color:var(--danger)">▼ 110% liquidation</span>
+          <span style="color:var(--warn)">150% minimum</span>
+          <span style="color:var(--safe)">175%+ target ▲</span>
+        </div>
+      </div>
+
+      <!-- VAULT HEALTH BANNER -->
+      <div id="vaultHealthBanner">
+        <div class="vhb-title" id="vhbTitle"></div>
+        <div class="vhb-text" id="vhbText"></div>
+        <button class="vhb-action" id="vhbAction" style="display:none" onclick=""></button>
+      </div>
+
+      <!-- TABS -->
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-btn-auto"     onclick="switchTab('auto',this)">Auto Borrow</button>
+        <button class="tab-btn"        id="tab-btn-deposit"  onclick="switchTab('deposit',this)">Deposit PLS</button>
+        <button class="tab-btn"        id="tab-btn-mint"     onclick="switchTab('mint',this)">Borrow More</button>
+        <button class="tab-btn"        id="tab-btn-repay"    onclick="switchTab('repay',this)">Repay</button>
+        <button class="tab-btn"        id="tab-btn-withdraw" onclick="switchTab('withdraw',this)">Withdraw</button>
+      </div>
+
+      <!-- AUTO TAB -->
+      <div class="tab-pane active" id="tab-auto">
+        <div class="auto-info">
+          <p>Deposit native PLS and automatically mint pSunDAI at a safe 155% collateral ratio — in one click.</p>
+          <p style="margin-top:6px">The deposit always goes through even if the mint doesn't. If the dynamic debt ceiling or your vault cap is reached, your PLS is still deposited as collateral — the auto-mint step is silently skipped and you'll need to borrow separately later.</p>
+          <div class="preview" id="autoPreview">Enter PLS amount to preview</div>
+        </div>
+        <label>PLS Amount</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxAutoMint()">MAX</button>
+          <input type="number" id="autoAmt" placeholder="0.0" oninput="previewAuto()" min="0" step="any">
+          <span class="input-unit">PLS</span>
+        </div>
+        <div class="hint">Wallet: <span id="plsWalletBal">—</span> · You receive: ~<span id="autoMintPreview">0</span> pSunDAI</div>
+        <button class="btn btn-primary" onclick="doAutoMint()">1-Click Auto Borrow</button>
+      </div>
+
+      <!-- DEPOSIT TAB -->
+      <div class="tab-pane" id="tab-deposit">
+        <label>Deposit native PLS</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxDepositPLS()">MAX</button>
+          <input type="number" id="depPLSAmt" placeholder="0.0" min="0" step="any">
+          <span class="input-unit">PLS</span>
+        </div>
+        <div class="hint">Wallet balance: <span id="plsWalletBalDep">—</span></div>
+        <button class="btn btn-primary" onclick="doDepositPLS()">Deposit PLS</button>
+        <div style="margin:14px 0;text-align:center;font-size:.75rem;color:var(--muted)">— or deposit WPLS —</div>
+        <label>Deposit WPLS (requires one-time approval)</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxWPLS()">MAX</button>
+          <input type="number" id="depWPLSAmt" placeholder="0.0" min="0" step="any">
+          <span class="input-unit">WPLS</span>
+        </div>
+        <div class="hint">WPLS balance: <span id="wplsBalance">—</span></div>
+        <button class="btn btn-secondary" onclick="doDepositWPLS()">Approve &amp; Deposit WPLS</button>
+      </div>
+
+      <!-- MINT TAB -->
+      <div class="tab-pane" id="tab-mint">
+        <label>Mint pSunDAI</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxMint()">MAX</button>
+          <input type="number" id="mintAmt" placeholder="0.0" oninput="previewMint()" min="0" step="any">
+          <span class="input-unit" style="right:12px">pSunDAI</span>
+        </div>
+        <div class="hint">After mint CR: <span id="afterMintCR">—</span> · Mintable: <span id="mintableHint">—</span> · Vault cap: <span id="vaultCapHint">—</span></div>
+        <button class="btn btn-primary" onclick="doMint()">Mint pSunDAI</button>
+      </div>
+
+      <!-- REPAY TAB -->
+      <div class="tab-pane" id="tab-repay">
+        <label>Repay pSunDAI</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxRepay()">MAX</button>
+          <input type="number" id="repayAmt" placeholder="0.0" oninput="previewRepay()" min="0" step="any">
+          <span class="input-unit" style="right:12px">pSunDAI</span>
+        </div>
+        <div class="hint">Balance: <span id="repayBalHint">—</span> · After repay CR: <span id="afterRepayCR">—</span></div>
+        <div id="repayToSafeRow" style="display:none;margin-bottom:10px;padding:10px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);border-radius:8px;font-size:.82rem">
+          <span style="color:var(--warn)">Vault is at risk.</span> Repay <strong id="toSafeAmt" style="color:var(--gold)">—</strong> pSunDAI to restore to 150% CR.
+          <button onclick="setRepayToSafe()" style="margin-left:8px;padding:3px 10px;border-radius:5px;border:1px solid var(--amber);background:rgba(245,200,66,.1);color:var(--gold);cursor:pointer;font-size:.8rem;font-weight:600">Fill</button>
+        </div>
+        <button class="btn btn-primary" onclick="doRepay()">Repay</button>
+        <div class="action-sep">— or use a quick action —</div>
+        <button class="btn btn-secondary" onclick="doRepayToSafe()">&#10003; Repay to Safety (150% CR)</button>
+        <button class="btn btn-exit" onclick="doRepayAndWithdraw()">&#8617; Repay All &amp; Exit — Withdraw PLS</button>
+      </div>
+
+      <!-- WITHDRAW TAB -->
+      <div class="tab-pane" id="tab-withdraw">
+        <label>Withdraw PLS (native)</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxWithdraw()">MAX SAFE</button>
+          <input type="number" id="withPLSAmt" placeholder="0.0" oninput="previewWithdraw()" min="0" step="any">
+          <span class="input-unit">PLS</span>
+        </div>
+        <div class="hint">Max safe withdrawal: <span id="maxWithdrawHint">—</span> · After withdraw CR: <span id="afterWithdrawCR">—</span></div>
+        <button class="btn btn-primary" onclick="doWithdrawPLS()">Withdraw PLS</button>
+        <div style="margin:14px 0;text-align:center;font-size:.75rem;color:var(--muted)">— or withdraw as WPLS —</div>
+        <label>Withdraw WPLS</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxWithdrawWPLS()">MAX SAFE</button>
+          <input type="number" id="withWPLSAmt" placeholder="0.0" min="0" step="any">
+          <span class="input-unit">WPLS</span>
+        </div>
+        <button class="btn btn-secondary" onclick="doWithdrawWPLS()">Withdraw WPLS</button>
+      </div>
+
+      <div id="statusMsg"></div>
+    </div>
+
+    <!-- STABILITY POOL PANEL (NEW IN V9) -->
+    <div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="panel-title" style="margin:0">Stability Pool <span style="color:var(--safe);font-size:.68rem;text-transform:none;letter-spacing:0;font-weight:600">— earn yield</span></div>
+      </div>
+
+      <div class="sp-highlight">
+        <p>Deposit pSunDAI to help absorb liquidations atomically — no vault of your own required. You earn a continuous share of the 0.5% stability fee (whether or not anyone gets liquidated), plus a share of liquidation bonuses while your deposit is in the pool.</p>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="stat-box">
+          <div class="s-label">Your Pool Deposit</div>
+          <div class="s-val gold" id="spMyDeposit">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Your Claimable Gain (PLS)</div>
+          <div class="s-val safe" id="spMyGain">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Total Pool Deposits</div>
+          <div class="s-val" id="spTotalDeposits">—</div>
+        </div>
+        <div class="stat-box">
+          <div class="s-label">Total Pool Collateral</div>
+          <div class="s-val" id="spTotalCollateral">—</div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" id="sptab-btn-provide"  onclick="switchSPTab('provide',this)">Provide</button>
+        <button class="tab-btn"        id="sptab-btn-withdraw" onclick="switchSPTab('withdraw',this)">Withdraw</button>
+        <button class="tab-btn"        id="sptab-btn-claim"    onclick="switchSPTab('claim',this)">Claim</button>
+      </div>
+
+      <div class="tab-pane active" id="sptab-provide">
+        <label>Deposit pSunDAI into the Stability Pool</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxSPProvide()">MAX</button>
+          <input type="number" id="spProvideAmt" placeholder="0.0" min="0" step="any">
+          <span class="input-unit" style="right:12px">pSunDAI</span>
+        </div>
+        <div class="hint">Wallet balance: <span id="spWalletBalHint">—</span> · Requires one-time approval</div>
+        <button class="btn btn-primary" onclick="doProvideSP()">Approve &amp; Provide</button>
+      </div>
+
+      <div class="tab-pane" id="sptab-withdraw">
+        <label>Withdraw from the Stability Pool</label>
+        <div class="input-wrap">
+          <button class="max-btn" onclick="setMaxSPWithdraw()">MAX</button>
+          <input type="number" id="spWithdrawAmt" placeholder="0.0" min="0" step="any">
+          <span class="input-unit" style="right:12px">pSunDAI</span>
+        </div>
+        <div class="hint">Your compounded deposit: <span id="spWithdrawHint">—</span> · Any pending gain is claimed automatically</div>
+        <button class="btn btn-primary" onclick="doWithdrawSP()">Withdraw</button>
+      </div>
+
+      <div class="tab-pane" id="sptab-claim">
+        <p style="font-size:.82rem;color:var(--muted);line-height:1.55;margin-bottom:14px">Claim your accumulated PLS collateral gain without depositing or withdrawing any pSunDAI. Your principal stays exactly where it is.</p>
+        <div class="hint">Claimable now: <span id="spClaimHint">—</span></div>
+        <button class="btn btn-primary" onclick="doClaimSP()">Claim Collateral Gain</button>
+      </div>
+
+      <div id="spStatusMsg"></div>
+    </div>
+  </div>
+
+  <!-- SIDE COLUMN -->
+  <div class="side-col">
+    <!-- SYSTEM STATE -->
+    <div class="panel">
+      <div class="panel-title">System State</div>
+      <div class="sys-row">
+        <span class="sr-key">Total Collateral</span>
+        <span class="sr-val" id="sysTotColl">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Total Debt</span>
+        <span class="sr-val" id="sysTotDebt">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Oracle Max Safe Debt</span>
+        <span class="sr-val" id="sysMaxSafeDebt">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">System Health</span>
+        <span class="sr-val" id="sysHealth">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Stability Pool Deposits</span>
+        <span class="sr-val green" id="sysSPDeposits">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Stability Pool Collateral</span>
+        <span class="sr-val green" id="sysSPCollateral">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Surplus Buffer</span>
+        <span class="sr-val green" id="sysSurplus">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">Bad Debt</span>
+        <span class="sr-val" id="sysBadDebt">—</span>
+      </div>
+      <div class="sys-row">
+        <span class="sr-key">System Equity</span>
+        <span class="sr-val" id="sysEquity">—</span>
+      </div>
+      <div class="util-bar-wrap">
+        <div class="util-bar-label">
+          <span>Effective Debt Ceiling</span>
+          <span id="debtCeilPct">—</span>
+        </div>
+        <div class="util-bar-track">
+          <div class="util-bar-fill" id="debtCeilBar" style="width:0%;background:var(--safe)"></div>
+        </div>
+        <div style="font-size:.7rem;color:var(--muted);margin-top:4px" id="debtCeilAbs">—</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:4px">min(10B static outer bound, oracle's real-time liquidity-derived capacity) — the dynamic side is the real limit day to day.</div>
+      </div>
+    </div>
+
+    <!-- PROTOCOL TOOLS (collapsible — for keepers/developers) -->
+    <div class="panel">
+      <details>
+        <summary class="panel-title" style="margin-bottom:0">
+          Advanced Tools <i class="chevron">›</i>
+          <span style="font-size:.65rem;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;margin-left:4px">for keepers &amp; developers</span>
+        </summary>
+        <div style="margin-top:14px">
+          <div class="tool-item">
+            <div class="tool-desc">Update the oracle price. Keeps the TWAP current. Safe for anyone to call any time.</div>
+            <button class="tool-btn" onclick="doPoke()">Poke Oracle</button>
+          </div>
+          <div class="tool-item">
+            <div class="tool-desc">Balance protocol accounting — nets stability fees against bad debt. Harmless to run.</div>
+            <button class="tool-btn" onclick="doReconcile()">Reconcile Surplus</button>
+          </div>
+          <div class="tool-item">
+            <div class="tool-desc">V9: a fully underwater vault (collateral &lt; 100% of debt) can be voluntarily unwound. You must repay pSunDAI and receive collateral strictly pro-rata — no bonus, no free value. This is a real, deliberate loss to close the position, not a reward.</div>
+            <div class="tool-input-col">
+              <input type="text" id="badDebtAddr" placeholder="0x vault owner address">
+              <input type="number" id="badDebtAmt" placeholder="pSunDAI to repay">
+              <button class="tool-btn" onclick="doClearBadDebt()">Repay &amp; Claim Pro-Rata PLS</button>
+            </div>
+          </div>
+          <div class="tool-item">
+            <div class="tool-desc">Burn your own pSunDAI to cancel accumulated protocol bad debt.</div>
+            <div class="tool-input-row">
+              <input type="number" id="settleAmt" placeholder="pSunDAI amount">
+              <button class="tool-btn" onclick="doSettle()">Settle Debt</button>
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- VAULT HEALTH ZONES -->
+    <div class="panel">
+      <div class="panel-title">Vault Health Zones</div>
+      <div style="font-size:.78rem;color:var(--muted);line-height:1.7">
+        <div><span style="color:var(--safe)">▲ 150%+</span> — Safe. Can mint &amp; withdraw freely.</div>
+        <div><span style="color:var(--warn)">◆ 110–150%</span> — Cannot mint. Add collateral.</div>
+        <div><span style="color:var(--danger)">▼ &lt;110%</span> — Liquidatable. Stability Pool absorbs first if funded; bonus grows 2% → 5% over 3 hours either way.</div>
+        <div style="margin-top:10px;color:var(--muted)">Target: 175%+ to absorb PLS volatility comfortably.</div>
+      </div>
+    </div>
+
+    <!-- VERIFIED CONTRACTS -->
+    <div class="panel">
+      <div class="panel-title">Verified Contracts · PulseChain</div>
+
+      <div class="ctr-block">
+        <div class="ctr-name">pSunDAI Token (ERC-20)</div>
+        <div class="ctr-addr">0x1b13cFddab761372cBBF815502E38b4e3613dDF9</div>
+        <div class="ctr-links">
+          <button class="cr-copy" onclick="navigator.clipboard.writeText('0x1b13cFddab761372cBBF815502E38b4e3613dDF9')">Copy</button>
+          <a class="cr-scan" href="https://scan.pulsechain.com/address/0x1b13cFddab761372cBBF815502E38b4e3613dDF9" target="_blank" rel="noopener">View on PulseScan ↗</a>
+        </div>
+      </div>
+
+      <div class="ctr-block">
+        <div class="ctr-name">Vault V9</div>
+        <div class="ctr-addr">0x23669aeeaE9Fe50e9453ABB556Ff75Eae3EEB931</div>
+        <div class="ctr-links">
+          <button class="cr-copy" onclick="navigator.clipboard.writeText('0x23669aeeaE9Fe50e9453ABB556Ff75Eae3EEB931')">Copy</button>
+          <a class="cr-scan" href="https://scan.pulsechain.com/address/0x23669aeeaE9Fe50e9453ABB556Ff75Eae3EEB931" target="_blank" rel="noopener">View on PulseScan ↗</a>
+        </div>
+      </div>
+
+      <div class="ctr-block">
+        <div class="ctr-name">Oracle V9 (5-Pool PulseX, Liquidity-Weighted TWAP)</div>
+        <div class="ctr-addr">0xaaa9e184BA6Ef908c464A2c9e91B990bEAb7faB7</div>
+        <div class="ctr-links">
+          <button class="cr-copy" onclick="navigator.clipboard.writeText('0xaaa9e184BA6Ef908c464A2c9e91B990bEAb7faB7')">Copy</button>
+          <a class="cr-scan" href="https://scan.pulsechain.com/address/0xaaa9e184BA6Ef908c464A2c9e91B990bEAb7faB7" target="_blank" rel="noopener">View on PulseScan ↗</a>
+        </div>
+      </div>
+
+      <div class="trust-badges">
+        <span class="trust-badge">No admin keys</span>
+        <span class="trust-badge">No proxy</span>
+        <span class="trust-badge">No pause</span>
+        <span class="trust-badge">No upgrade path</span>
+        <span class="trust-badge">Chain ID 369</span>
+        <span class="trust-badge">Verified on Sourcify</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-links">
+    <a href="https://scan.pulsechain.com/address/0x1b13cFddab761372cBBF815502E38b4e3613dDF9" target="_blank" rel="noopener">pSunDAI Token</a>
+    <a href="https://scan.pulsechain.com/address/0x23669aeeaE9Fe50e9453ABB556Ff75Eae3EEB931" target="_blank" rel="noopener">Vault V9</a>
+    <a href="https://scan.pulsechain.com/address/0xaaa9e184BA6Ef908c464A2c9e91B990bEAb7faB7" target="_blank" rel="noopener">Oracle V9</a>
+    <a href="liquidations.html">Vault Dashboard</a>
+  </div>
+  <div class="footer-trust">pSunDAI V9 · PulseChain (Chain ID 369) · No admin keys · Immutable after deployment · No proxy contracts · No pause function · Experimental software, deployed without a professional third-party audit — use at your own risk</div>
+</footer>
+
+<!-- HOW-TO MODAL -->
+<div id="modal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="document.getElementById('modal').classList.remove('open')">✕ Close</button>
+    <h2>How pSunDAI Works</h2>
+
+    <h3>What is pSunDAI?</h3>
+    <p>pSunDAI is a <strong style="color:var(--gold)">lending protocol on PulseChain</strong>. You deposit PLS as collateral and borrow pSunDAI — a stable token worth ~$1 USD — against it. When you're done, repay the pSunDAI and get your PLS back.</p>
+    <p>There are no admins, no fees to a team, and no way to pause or change the rules. The protocol runs on its own forever.</p>
+
+    <h3>Getting started — 3 steps</h3>
+    <p><strong style="color:var(--gold)">Step 1 — Deposit PLS.</strong> Go to the "Deposit PLS" tab (or use Auto Borrow to skip to Step 3). Your PLS becomes collateral locked in the vault.</p>
+    <p><strong style="color:var(--gold)">Step 2 — Borrow pSunDAI.</strong> Use the "Borrow More" tab to mint pSunDAI. Each token is worth approximately $1. You must keep your Collateral Ratio above 150%.</p>
+    <p><strong style="color:var(--gold)">Step 3 — Repay when ready.</strong> Repay your pSunDAI at any time using the "Repay" tab. Then withdraw your PLS. No time limit, no deadlines.</p>
+
+    <h3>What is Collateral Ratio (CR)?</h3>
+    <p>CR = (value of your PLS) ÷ (pSunDAI you owe) × 100%.</p>
+    <p>Example: You deposit $300 worth of PLS and borrow 150 pSunDAI. Your CR = 300 ÷ 150 × 100% = <strong style="color:var(--safe)">200%</strong>. That's healthy.</p>
+    <ul>
+      <li><strong style="color:var(--safe)">175%+ </strong> — Safe zone. Good buffer against price swings.</li>
+      <li><strong style="color:var(--warn)">150–175%</strong> — Acceptable, but top up if PLS drops.</li>
+      <li><strong style="color:var(--warn)">110–150%</strong> — At risk. You cannot borrow more. Add PLS or repay debt.</li>
+      <li><strong style="color:var(--danger)">Below 110%</strong> — Liquidatable. The Stability Pool or a keeper can repay your debt and claim your PLS.</li>
+    </ul>
+
+    <h3>How to stay safe</h3>
+    <ul>
+      <li>Keep your CR <strong>above 175%</strong> at all times as a buffer. PLS is volatile.</li>
+      <li>Check your vault regularly, especially when PLS price is falling.</li>
+      <li>Use <strong>"Repay to 150% CR"</strong> button in the Repay tab if you get close to the danger zone.</li>
+      <li>If your CR turns <strong style="color:var(--danger)">red</strong>, act immediately — repay pSunDAI or deposit more PLS.</li>
+      <li>There are no warning emails. Only you are responsible for monitoring your vault.</li>
+    </ul>
+
+    <h3>What is liquidation?</h3>
+    <p>If your CR falls below 110%, your vault becomes liquidatable. In V9, the Stability Pool absorbs this automatically if it's funded — otherwise a keeper repays your debt and claims your PLS plus a bonus (2–5%). Either way you lose your PLS collateral but your pSunDAI debt is cancelled.</p>
+    <p>Liquidation is not a punishment — it keeps the protocol solvent. But it means you lose your PLS, so avoid it.</p>
+
+    <h3>What is the Stability Pool?</h3>
+    <p>New in V9. Anyone can deposit pSunDAI into the Stability Pool — you don't need a vault of your own. Your deposit helps absorb liquidations directly, and in exchange you earn a continuous share of the protocol's 0.5% stability fee (even when nothing gets liquidated) plus a share of liquidation bonuses. See the Stability Pool panel on the main page.</p>
+
+    <h3>Auto Borrow</h3>
+    <p>The fastest way to start: enter a PLS amount in the <strong>Auto Borrow</strong> tab and click the button. It deposits your PLS and borrows pSunDAI at 155% CR in a single transaction.</p>
+
+    <h3>Repay All &amp; Exit</h3>
+    <p>To fully close your position, go to the Repay tab and click <strong>"Repay All &amp; Withdraw PLS"</strong>. This repays all debt and returns your PLS in one transaction. Make sure you have enough pSunDAI in your wallet first.</p>
+
+    <details style="margin-top:16px" open>
+      <summary style="cursor:pointer;color:var(--amber);font-size:.85rem;font-weight:700;user-select:none">
+        What's new in V9 <i class="chevron">›</i>
+      </summary>
+      <div style="margin-top:12px">
+        <p>V9 responds to an external security review of V8 that found two <strong style="color:var(--danger)">confirmed, exploitable</strong> flaws — not theoretical concerns — plus a structural gap, discovered before V8 ever held real value:</p>
+        <ul>
+          <li><strong>Fixed — free collateral extraction.</strong> V8's <code>clearBadDebt()</code> gave away 100% of a vault's collateral for free once it appeared underwater, gated on a manipulable spot price. V9 requires the caller to actually repay pSunDAI and pays out strictly pro-rata with no bonus — a caller can never receive more value than they paid.</li>
+          <li><strong>Fixed — unbounded liquidation manipulation.</strong> V8's spot-liquidation arm used raw, unbounded spot price once activated. V9 clamps it to within 15% of TWAP no matter how far or how long spot is suppressed.</li>
+          <li><strong>New — Stability Pool.</strong> Liquidations are now absorbed atomically by pre-deposited pSunDAI instead of depending on a keeper holding capital and reselling collateral into thin PulseChain liquidity.</li>
+          <li><strong>New — real yield.</strong> The stability fee (and flash-mint fee) now mint directly into the Stability Pool as depositor yield instead of sitting in an inert counter with no beneficiary.</li>
+          <li><strong>Hardened oracle.</strong> Minimum pool reserve raised 10x (calibrated against real observed PulseX depth), a 3-of-5 minimum valid pool requirement, longer spot-confirmation window, and system debt capacity cut from 20x to 5x real DEX depth.</li>
+        </ul>
+        <p style="margin-top:10px"><strong style="color:var(--warn)">V9 was deployed without a professional third-party audit.</strong> It passed a 27-test internal Foundry suite (including tests that specifically reproduce and confirm the fix for both V8 exploits) and multiple author review passes, but that is not a substitute for professional review. Use accordingly.</p>
+      </div>
+    </details>
+
+    <details style="margin-top:16px">
+      <summary style="cursor:pointer;color:var(--amber);font-size:.85rem;font-weight:700;user-select:none">
+        Technical details (oracle, Stability Pool, emergency functions) <i class="chevron">›</i>
+      </summary>
+      <div style="margin-top:12px">
+        <h3>Oracle: PulseX 5-Pool Liquidity-Weighted TWAP + Clamped Spot</h3>
+        <ul>
+          <li><strong>TWAP (Conservative):</strong> Slow to fall (4h confirmation for &gt;1% moves down), fast to rise (30min). Used for all safety checks. Pools vote proportional to their stable-side reserve depth.</li>
+          <li><strong>Spot Warning:</strong> If the real-time PulseX price stays 5%+ below TWAP for 90 continuous minutes, liquidations switch to a clamped spot price (within 15% of TWAP). Flash crashes recover before then — real crashes don't.</li>
+          <li><strong>Max Safe Debt:</strong> <code>oracle.maxSafeDebt()</code> — 5× the rolling 24h minimum of combined valid-pool reserves. This is what actually gates the effective debt ceiling and per-vault cap.</li>
+        </ul>
+
+        <h3>Stability Pool</h3>
+        <ul>
+          <li><strong>Provide/Withdraw/Claim:</strong> deposit pSunDAI, withdraw your compounded balance any time, claim collateral gains independently.</li>
+          <li><strong>Liquidation absorption:</strong> anyone can call <code>liquidateFromStabilityPool(user)</code> permissionlessly on an eligible vault — no capital required from the caller, who receives a small flat tip as gas compensation.</li>
+          <li><strong>Full wipeout handling:</strong> if a liquidation exactly exhausts the pool, the internal accounting epoch rolls over cleanly — pre-wipeout depositors keep their claim to that final event's gain, new depositors after start fresh and isolated.</li>
+        </ul>
+
+        <h3>Emergency Functions</h3>
+        <ul>
+          <li><strong>Emergency Unlock:</strong> Zero debt + last deposit &gt;30 days → withdraw regardless of oracle state.</li>
+          <li><strong>Emergency Repay / Withdraw:</strong> If oracle has been dead for 7+ days, repay and withdraw without price checks.</li>
+        </ul>
+
+        <h3>Stability Fee</h3>
+        <p>0.5% APY accrues on your debt continuously. 1,000 pSunDAI debt grows by ~5 pSunDAI per year. This is why your "Debt" stat slowly increases over time. In V9, this fee mints directly into the Stability Pool as depositor yield whenever it has deposits, instead of an inert accounting counter.</p>
+
+        <h3>Protocol Tools</h3>
+        <ul>
+          <li><strong>Poke Oracle:</strong> Anyone can call this to advance the TWAP state machine. Rate-limited to once per 30 minutes.</li>
+          <li><strong>Reconcile:</strong> Net stability fees collected against any bad debt on-chain.</li>
+          <li><strong>Clear Bad Debt (V9, changed):</strong> Voluntarily unwind a fully underwater vault by repaying pSunDAI. Payout is strictly pro-rata — no bonus, no free collateral.</li>
+          <li><strong>Settle Debt:</strong> Burn your own pSunDAI to cancel accumulated protocol bad debt.</li>
+        </ul>
+      </div>
+    </details>
+  </div>
+</div>
+
+<script>
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const VAULT_ADDR  = "0x23669aeeaE9Fe50e9453ABB556Ff75Eae3EEB931";
+const TOKEN_ADDR  = "0x1b13cFddab761372cBBF815502E38b4e3613dDF9";
+const ORACLE_ADDR = "0xaaa9e184BA6Ef908c464A2c9e91B990bEAb7faB7";
+const CHAIN_ID    = 369n;
+const CHAIN_HEX   = "0x171";
+const CHAIN_NAME  = "PulseChain";
+
+// ── ABIS (inlined — no fetch needed, runs from file://) ─────────────────────
+const VAULT_ABI  = [{"type":"constructor","inputs":[{"name":"_wpls","type":"address","internalType":"address"},{"name":"_psundai","type":"address","internalType":"address"},{"name":"_oracle","type":"address","internalType":"address"},{"name":"_debtCeiling","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},{"type":"fallback","stateMutability":"payable"},{"type":"receive","stateMutability":"payable"},{"type":"function","name":"AUCTION_TIME","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"AUTO_MINT_RATIO","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"COLLATERAL_RATIO","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"DEBT_CEILING","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"DECIMAL_PRECISION","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"FLASH_FEE_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"LIQUIDATION_CALLER_TIP_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"LIQUIDATION_RATIO","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MAX_BONUS_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MAX_VAULTS_AT_CAP","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MAX_VOLATILITY_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_ACTION_AMOUNT","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_BONUS_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_LIQUIDATION_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_SYSTEM_HEALTH","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"ORACLE_DEAD_THRESHOLD","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"P","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"SCALE_FACTOR","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"SECONDS_PER_YEAR","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"STABILITY_FEE_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"VERSION","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"WITHDRAW_COOLDOWN","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"autoRepayToHealth","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"badDebtAccumulated","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"claimCollateralGain","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"clearBadDebt","inputs":[{"name":"user","type":"address","internalType":"address"},{"name":"repayAmount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"currentEpoch","inputs":[],"outputs":[{"name":"","type":"uint128","internalType":"uint128"}],"stateMutability":"view"},{"type":"function","name":"currentScale","inputs":[],"outputs":[{"name":"","type":"uint128","internalType":"uint128"}],"stateMutability":"view"},{"type":"function","name":"deposit","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"depositAndAutoMintPLS","inputs":[],"outputs":[],"stateMutability":"payable"},{"type":"function","name":"depositPLS","inputs":[],"outputs":[],"stateMutability":"payable"},{"type":"function","name":"depositSnapshots","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"P","type":"uint256","internalType":"uint256"},{"name":"S","type":"uint256","internalType":"uint256"},{"name":"scale","type":"uint128","internalType":"uint128"},{"name":"epoch","type":"uint128","internalType":"uint128"}],"stateMutability":"view"},{"type":"function","name":"effectiveDebtCeiling","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"emergencyRepay","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"emergencyUnlock","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"emergencyWithdrawPLS","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"epochToScaleToSum","inputs":[{"name":"","type":"uint128","internalType":"uint128"},{"name":"","type":"uint128","internalType":"uint128"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"getCompoundedStabilityDeposit","inputs":[{"name":"depositor","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"getDepositorCollateralGain","inputs":[{"name":"depositor","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"getStabilityPoolStats","inputs":[],"outputs":[{"name":"totalDeposits","type":"uint256","internalType":"uint256"},{"name":"totalCollateralHeld","type":"uint256","internalType":"uint256"},{"name":"currentP","type":"uint256","internalType":"uint256"},{"name":"scale","type":"uint128","internalType":"uint128"},{"name":"epoch","type":"uint128","internalType":"uint128"}],"stateMutability":"view"},{"type":"function","name":"getVaultCount","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"getVaultOwners","inputs":[{"name":"start","type":"uint256","internalType":"uint256"},{"name":"count","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"address[]","internalType":"address[]"}],"stateMutability":"view"},{"type":"function","name":"hasVault","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isLiquidatable","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[{"name":"canLiquidate","type":"bool","internalType":"bool"},{"name":"currentRatio","type":"uint256","internalType":"uint256"},{"name":"atSpotPrice","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isOracleDead","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isUXSafe","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"lastOraclePrice","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"lastOracleUpdateTime","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"liquidate","inputs":[{"name":"user","type":"address","internalType":"address"},{"name":"repayAmount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"liquidateFromStabilityPool","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"liquidateWithFlashMint","inputs":[{"name":"user","type":"address","internalType":"address"},{"name":"repayAmount","type":"uint256","internalType":"uint256"},{"name":"data","type":"bytes","internalType":"bytes"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"liquidationInfo","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[{"name":"debt","type":"uint256","internalType":"uint256"},{"name":"minRepay","type":"uint256","internalType":"uint256"},{"name":"bonusBps","type":"uint256","internalType":"uint256"},{"name":"auctionElapsed","type":"uint256","internalType":"uint256"},{"name":"isUnderwater","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"markUndercollateralized","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"maxMint","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"mint","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"oracle","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract pSunDAIoraclePLSXHybrid_v9"}],"stateMutability":"view"},{"type":"function","name":"provideToStabilityPool","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"psundai","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract pSunDAI_ASA"}],"stateMutability":"view"},{"type":"function","name":"reconcile","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"repay","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"repayAndAutoWithdraw","inputs":[{"name":"repayAmount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"repayToHealth","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"settleDebt","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"stabilityDeposits","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"stabilityPoolCollateral","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"surplusBuffer","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"systemEquity","inputs":[],"outputs":[{"name":"","type":"int256","internalType":"int256"}],"stateMutability":"view"},{"type":"function","name":"systemHealth","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"totalCollateral","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"totalDebt","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"totalStabilityDeposits","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"vaultCap","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"vaultInfo","inputs":[{"name":"user","type":"address","internalType":"address"}],"outputs":[{"name":"collateral","type":"uint256","internalType":"uint256"},{"name":"debt","type":"uint256","internalType":"uint256"},{"name":"collateralUSD","type":"uint256","internalType":"uint256"},{"name":"ratio","type":"uint256","internalType":"uint256"},{"name":"mintable","type":"uint256","internalType":"uint256"},{"name":"oracleHealthy","type":"bool","internalType":"bool"},{"name":"price","type":"uint256","internalType":"uint256"},{"name":"systemRatio","type":"uint256","internalType":"uint256"},{"name":"spotLiquidationActive","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"vaultOwners","inputs":[{"name":"","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"vaults","inputs":[{"name":"","type":"address","internalType":"address"}],"outputs":[{"name":"collateral","type":"uint256","internalType":"uint256"},{"name":"debt","type":"uint256","internalType":"uint256"},{"name":"lastDepositTime","type":"uint256","internalType":"uint256"},{"name":"lastWithdrawTime","type":"uint256","internalType":"uint256"},{"name":"lastDebtAccrual","type":"uint256","internalType":"uint256"},{"name":"undercollateralizedSince","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"withdrawFromStabilityPool","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"withdrawPLS","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"withdrawWPLS","inputs":[{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"wpls","inputs":[],"outputs":[{"name":"","type":"address","internalType":"contract IERC20"}],"stateMutability":"view"},{"type":"event","name":"BadDebtCleared","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"collateralReturned","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"debtRepaid","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"caller","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"event","name":"CollateralGainWithdrawn","inputs":[{"name":"depositor","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"DebtCeilingReached","inputs":[{"name":"totalDebt","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ceiling","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"DebtSettled","inputs":[{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"settler","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"event","name":"Deposit","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ratio","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"EmergencyRepay","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"EmergencyWithdraw","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"EmergencyWithdrawOracleDead","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"LiquidatedFromStabilityPool","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"debtOffset","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"collateralToPool","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"callerTip","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"caller","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"event","name":"Liquidation","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"repayAmount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"liquidator","type":"address","indexed":true,"internalType":"address"},{"name":"reward","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ratio","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"spotPrice","type":"bool","indexed":false,"internalType":"bool"}],"anonymous":false},{"type":"event","name":"Mint","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ratio","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"OracleFallbackUsed","inputs":[{"name":"price","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"Repay","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ratio","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"StabilityDeposit","inputs":[{"name":"depositor","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"StabilityPoolEmptied","inputs":[{"name":"newEpoch","type":"uint128","indexed":false,"internalType":"uint128"}],"anonymous":false},{"type":"event","name":"StabilityPoolFeeDistributed","inputs":[{"name":"feeAmount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"StabilityPoolOffset","inputs":[{"name":"debtOffset","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"collateralAdded","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"StabilityWithdraw","inputs":[{"name":"depositor","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"SurplusReconciled","inputs":[{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"VaultMarkedUndercollateralized","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"timestamp","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"VaultRegistered","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"event","name":"Withdraw","inputs":[{"name":"user","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"ratio","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"error","name":"AddressEmptyCode","inputs":[{"name":"target","type":"address","internalType":"address"}]},{"type":"error","name":"AddressInsufficientBalance","inputs":[{"name":"account","type":"address","internalType":"address"}]},{"type":"error","name":"FailedInnerCall","inputs":[]},{"type":"error","name":"MathOverflowedMulDiv","inputs":[]},{"type":"error","name":"ReentrancyGuardReentrantCall","inputs":[]},{"type":"error","name":"SafeERC20FailedOperation","inputs":[{"name":"token","type":"address","internalType":"address"}]}];
+const TOKEN_ABI  = [{"type":"constructor","inputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"VERSION","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"allowance","inputs":[{"name":"owner","type":"address","internalType":"address"},{"name":"spender","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"approve","inputs":[{"name":"spender","type":"address","internalType":"address"},{"name":"value","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"function","name":"balanceOf","inputs":[{"name":"account","type":"address","internalType":"address"}],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"burn","inputs":[{"name":"from","type":"address","internalType":"address"},{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"decimals","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"pure"},{"type":"function","name":"deployer","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"mint","inputs":[{"name":"to","type":"address","internalType":"address"},{"name":"amount","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"name","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"setVault","inputs":[{"name":"_vault","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"symbol","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"totalSupply","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"transfer","inputs":[{"name":"to","type":"address","internalType":"address"},{"name":"value","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"function","name":"transferFrom","inputs":[{"name":"from","type":"address","internalType":"address"},{"name":"to","type":"address","internalType":"address"},{"name":"value","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"nonpayable"},{"type":"function","name":"vault","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"vaultSet","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"event","name":"Approval","inputs":[{"name":"owner","type":"address","indexed":true,"internalType":"address"},{"name":"spender","type":"address","indexed":true,"internalType":"address"},{"name":"value","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"Burned","inputs":[{"name":"from","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"Minted","inputs":[{"name":"to","type":"address","indexed":true,"internalType":"address"},{"name":"amount","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"Transfer","inputs":[{"name":"from","type":"address","indexed":true,"internalType":"address"},{"name":"to","type":"address","indexed":true,"internalType":"address"},{"name":"value","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"VaultLinked","inputs":[{"name":"vault","type":"address","indexed":true,"internalType":"address"},{"name":"by","type":"address","indexed":true,"internalType":"address"}],"anonymous":false},{"type":"error","name":"ERC20InsufficientAllowance","inputs":[{"name":"spender","type":"address","internalType":"address"},{"name":"allowance","type":"uint256","internalType":"uint256"},{"name":"needed","type":"uint256","internalType":"uint256"}]},{"type":"error","name":"ERC20InsufficientBalance","inputs":[{"name":"sender","type":"address","internalType":"address"},{"name":"balance","type":"uint256","internalType":"uint256"},{"name":"needed","type":"uint256","internalType":"uint256"}]},{"type":"error","name":"ERC20InvalidApprover","inputs":[{"name":"approver","type":"address","internalType":"address"}]},{"type":"error","name":"ERC20InvalidReceiver","inputs":[{"name":"receiver","type":"address","internalType":"address"}]},{"type":"error","name":"ERC20InvalidSender","inputs":[{"name":"sender","type":"address","internalType":"address"}]},{"type":"error","name":"ERC20InvalidSpender","inputs":[{"name":"spender","type":"address","internalType":"address"}]}];
+const ORACLE_ABI = [{"type":"constructor","inputs":[{"name":"_pairDAIv1","type":"address","internalType":"address"},{"name":"_pairDAIv2","type":"address","internalType":"address"},{"name":"_pairUSDCv1","type":"address","internalType":"address"},{"name":"_pairUSDCv2","type":"address","internalType":"address"},{"name":"_pairUSDT","type":"address","internalType":"address"},{"name":"_wpls","type":"address","internalType":"address"},{"name":"_dai","type":"address","internalType":"address"},{"name":"_usdc","type":"address","internalType":"address"},{"name":"_usdt","type":"address","internalType":"address"}],"stateMutability":"nonpayable"},{"type":"function","name":"CONFIRM_TIME_DOWN","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"CONFIRM_TIME_UP","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"INSTANT_UPDATE_DOWN_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"INSTANT_UPDATE_UP_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"LIQUIDITY_BUF_SIZE","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"LIQUIDITY_SAMPLE_INTERVAL","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"LIQUIDITY_WINDOW","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MAX_PRICE_AGE","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MAX_SPOT_DEVIATION_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_POKE_INTERVAL","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_RESERVE_USD","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_TWAP_INTERVAL","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"MIN_VALID_POOLS","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"PRECISION","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"RECOVERY_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"ROLLING_BUF_SIZE","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"ROLLING_SAMPLE_INTERVAL","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"SAFE_CAPACITY_MULTIPLIER","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"SPOT_CONFIRM_TIME","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"SPOT_WARNING_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"STAIRCASE_WINDOW","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"STEP_SIZE_DOWN_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"STEP_SIZE_UP_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"TARGET_SHIFT_BPS","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"VERSION","inputs":[],"outputs":[{"name":"","type":"string","internalType":"string"}],"stateMutability":"view"},{"type":"function","name":"canPoke","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"dai","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"deployer","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"getLiquidationPrice","inputs":[],"outputs":[{"name":"price","type":"uint256","internalType":"uint256"},{"name":"isSpot","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"getPriceStatus","inputs":[],"outputs":[{"name":"currentPrice","type":"uint256","internalType":"uint256"},{"name":"marketPrice","type":"uint256","internalType":"uint256"},{"name":"divergenceBps","type":"uint256","internalType":"uint256"},{"name":"inConfirmation","type":"bool","internalType":"bool"},{"name":"confirmTimeRemaining","type":"uint256","internalType":"uint256"},{"name":"targetPrice","type":"uint256","internalType":"uint256"},{"name":"spotWarningActive","type":"bool","internalType":"bool"},{"name":"spotLiquidationEnabled","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"getPriceWithTimestamp","inputs":[],"outputs":[{"name":"price","type":"uint256","internalType":"uint256"},{"name":"timestamp","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},{"type":"function","name":"getSpotPrice","inputs":[],"outputs":[{"name":"price","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"immutableSet","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isHealthy","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isSpotLiquidationEnabled","inputs":[],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"isStale","inputs":[{"name":"threshold","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"lastPokeTime","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"lastPrice","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"lastUpdateTimestamp","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"liquidityBuf","inputs":[{"name":"","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"depth","type":"uint256","internalType":"uint256"},{"name":"ts","type":"uint40","internalType":"uint40"}],"stateMutability":"view"},{"type":"function","name":"liquidityCount","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"liquidityHead","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"maxSafeDebt","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"pairDAIv1","inputs":[],"outputs":[{"name":"pair","type":"address","internalType":"contract IUniswapV2Pair"},{"name":"priceCumulativeLast","type":"uint256","internalType":"uint256"},{"name":"oracleTimestampLast","type":"uint40","internalType":"uint40"},{"name":"stableDecimals","type":"uint8","internalType":"uint8"},{"name":"wplsIsToken0","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"pairDAIv2","inputs":[],"outputs":[{"name":"pair","type":"address","internalType":"contract IUniswapV2Pair"},{"name":"priceCumulativeLast","type":"uint256","internalType":"uint256"},{"name":"oracleTimestampLast","type":"uint40","internalType":"uint40"},{"name":"stableDecimals","type":"uint8","internalType":"uint8"},{"name":"wplsIsToken0","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"pairUSDCv1","inputs":[],"outputs":[{"name":"pair","type":"address","internalType":"contract IUniswapV2Pair"},{"name":"priceCumulativeLast","type":"uint256","internalType":"uint256"},{"name":"oracleTimestampLast","type":"uint40","internalType":"uint40"},{"name":"stableDecimals","type":"uint8","internalType":"uint8"},{"name":"wplsIsToken0","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"pairUSDCv2","inputs":[],"outputs":[{"name":"pair","type":"address","internalType":"contract IUniswapV2Pair"},{"name":"priceCumulativeLast","type":"uint256","internalType":"uint256"},{"name":"oracleTimestampLast","type":"uint40","internalType":"uint40"},{"name":"stableDecimals","type":"uint8","internalType":"uint8"},{"name":"wplsIsToken0","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"pairUSDT","inputs":[],"outputs":[{"name":"pair","type":"address","internalType":"contract IUniswapV2Pair"},{"name":"priceCumulativeLast","type":"uint256","internalType":"uint256"},{"name":"oracleTimestampLast","type":"uint40","internalType":"uint40"},{"name":"stableDecimals","type":"uint8","internalType":"uint8"},{"name":"wplsIsToken0","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"peekPriceView","inputs":[],"outputs":[{"name":"price","type":"uint256","internalType":"uint256"},{"name":"timestamp","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"pendingUpdate","inputs":[],"outputs":[{"name":"targetPrice","type":"uint256","internalType":"uint256"},{"name":"firstSeenTime","type":"uint256","internalType":"uint256"},{"name":"isActive","type":"bool","internalType":"bool"}],"stateMutability":"view"},{"type":"function","name":"poke","inputs":[],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"rollingBuf","inputs":[{"name":"","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"price","type":"uint256","internalType":"uint256"},{"name":"ts","type":"uint40","internalType":"uint40"}],"stateMutability":"view"},{"type":"function","name":"rollingCount","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"rollingHead","inputs":[],"outputs":[{"name":"","type":"uint8","internalType":"uint8"}],"stateMutability":"view"},{"type":"function","name":"setVault","inputs":[{"name":"_vault","type":"address","internalType":"address"}],"outputs":[],"stateMutability":"nonpayable"},{"type":"function","name":"spotWarningElapsed","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"spotWarningStart","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"timeUntilNextPoke","inputs":[],"outputs":[{"name":"","type":"uint256","internalType":"uint256"}],"stateMutability":"view"},{"type":"function","name":"usdc","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"usdt","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"vault","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"function","name":"wpls","inputs":[],"outputs":[{"name":"","type":"address","internalType":"address"}],"stateMutability":"view"},{"type":"event","name":"ConfirmationCancelled","inputs":[{"name":"reason","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"ConfirmationStarted","inputs":[{"name":"targetPrice","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"confirmTime","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"isDown","type":"bool","indexed":false,"internalType":"bool"}],"anonymous":false},{"type":"event","name":"PriceUpdated","inputs":[{"name":"price","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"timestamp","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"stepped","type":"bool","indexed":false,"internalType":"bool"}],"anonymous":false},{"type":"event","name":"SpotWarningCleared","inputs":[{"name":"spotPrice","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"twapPrice","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"SpotWarningTriggered","inputs":[{"name":"spotPrice","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"twapPrice","type":"uint256","indexed":false,"internalType":"uint256"},{"name":"timestamp","type":"uint256","indexed":false,"internalType":"uint256"}],"anonymous":false},{"type":"event","name":"VaultSet","inputs":[{"name":"vault","type":"address","indexed":false,"internalType":"address"}],"anonymous":false},{"type":"error","name":"MathOverflowedMulDiv","inputs":[]}];
+
+async function loadABIs() {
+  // ABIs are already inlined above — nothing to fetch
+}
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let provider, signer, account;
+let vault, token, oracle;
+const ZERO = 0n;
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+const fmt18 = v => {
+  const n = Number(ethers.formatUnits(v, 18));
+  if (n === 0) return "0";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1000) return n.toLocaleString("en", { maximumFractionDigits: 2 });
+  if (n >= 1) return n.toFixed(4);
+  return n.toFixed(6);
+};
+
+const fmtUSD = v => {
+  const n = Number(ethers.formatUnits(v, 18));
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
+  if (n >= 1000) return "$" + n.toLocaleString("en", { maximumFractionDigits: 2 });
+  return "$" + n.toFixed(2);
+};
+
+// PLS price is tiny USD value
+const fmtPLSPrice = v => {
+  const n = Number(ethers.formatUnits(v, 18));
+  if (n >= 1) return "$" + n.toFixed(4);
+  if (n >= 0.001) return "$" + n.toFixed(6);
+  return "$" + n.toFixed(8);
+};
+
+const fmtCR = v => {
+  if (v === ethers.MaxUint256 || v > 9999n) return "∞";
+  return Number(v).toLocaleString("en", { maximumFractionDigits: 1 }) + "%";
+};
+
+const crColor = v => {
+  if (v === ethers.MaxUint256 || v > 9999n) return "safe";
+  const n = Number(v);
+  if (n >= 175) return "safe";
+  if (n >= 110) return "warn";
+  return "danger";
+};
+
+const fmtSecs = s => {
+  if (s <= 0) return "0s";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+};
+
+// ── CANVAS BACKGROUND ─────────────────────────────────────────────────────────
+(function() {
+  const canvas = document.getElementById("bg");
+  const ctx = canvas.getContext("2d");
+  let W, H, particles = [];
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function initParticles() {
+    particles = Array.from({length: 80}, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - .5) * .3, vy: (Math.random() - .5) * .3,
+      r: Math.random() * 1.5 + .3,
+      a: Math.random() * .5 + .1,
+    }));
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    // radial corona
+    const grd = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W,H)*.6);
+    grd.addColorStop(0, "rgba(245,200,66,.04)");
+    grd.addColorStop(.5,"rgba(200,106,16,.02)");
+    grd.addColorStop(1, "transparent");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+
+    for (const p of particles) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(245,200,66,${p.a})`;
+      ctx.fill();
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W;
+      if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H;
+      if (p.y > H) p.y = 0;
+    }
+    requestAnimationFrame(draw);
+  }
+
+  resize(); initParticles(); draw();
+  window.addEventListener("resize", () => { resize(); initParticles(); });
+})();
+
+// ── TAB SWITCHING ─────────────────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+  document.getElementById("tab-" + name).classList.add("active");
+  (btn || document.getElementById("tab-btn-" + name))?.classList.add("active");
+}
+
+function switchSPTab(name, btn) {
+  ["provide","withdraw","claim"].forEach(n => {
+    document.getElementById("sptab-" + n).classList.remove("active");
+    document.getElementById("sptab-btn-" + n).classList.remove("active");
+  });
+  document.getElementById("sptab-" + name).classList.add("active");
+  (btn || document.getElementById("sptab-btn-" + name))?.classList.add("active");
+}
+
+function updateHealthBanner(collateral, debt, ratio, repayNeeded) {
+  const banner = document.getElementById("vaultHealthBanner");
+  const title  = document.getElementById("vhbTitle");
+  const text   = document.getElementById("vhbText");
+  const action = document.getElementById("vhbAction");
+  const cr = Number(ratio);
+
+  if (collateral === ZERO && debt === ZERO) {
+    banner.className = "vhb-new";
+    title.textContent = "Welcome — your vault is empty";
+    text.innerHTML = "Deposit PLS as collateral and borrow pSunDAI (each worth ~$1). <strong>Keep your Collateral Ratio above 150% at all times.</strong> If it falls below 110%, the Stability Pool or a keeper can liquidate your vault and claim your PLS.";
+    action.textContent = "Get started with Auto Borrow →";
+    action.onclick = () => switchTab("auto");
+    action.style.display = "inline-block";
+  } else if (cr < 110) {
+    banner.className = "vhb-danger";
+    title.textContent = "🚨 Vault is liquidatable — act immediately";
+    text.innerHTML = `Your CR is <strong>${fmtCR(ratio)}</strong>. Below 110% the Stability Pool or a keeper can repay your debt and claim your PLS. <strong>Repay pSunDAI right now</strong> to protect your position.`;
+    action.textContent = "Repay to Safety →";
+    action.onclick = () => { switchTab("repay"); doRepayToSafe(); };
+    action.style.display = "inline-block";
+  } else if (cr < 150) {
+    banner.className = "vhb-warn";
+    title.textContent = "⚠ Vault is at risk — below safe zone";
+    text.innerHTML = `CR: <strong>${fmtCR(ratio)}</strong>. You cannot borrow more. If PLS price falls further you could hit liquidation at 110%. Repay <strong>${fmt18(repayNeeded)} pSunDAI</strong> to get back to 150%.`;
+    action.textContent = "Repay to 150% CR →";
+    action.onclick = () => switchTab("repay");
+    action.style.display = "inline-block";
+  } else if (cr < 175) {
+    banner.className = "vhb-ok";
+    title.textContent = "✓ Vault is safe — CR: " + fmtCR(ratio);
+    text.textContent = "You're in the safe zone, but 175%+ is recommended. A PLS price drop could push you toward the at-risk zone.";
+    action.style.display = "none";
+  } else {
+    banner.className = "vhb-good";
+    title.textContent = "✓ Vault is healthy — CR: " + fmtCR(ratio);
+    text.textContent = "Your vault has a solid safety buffer. You're well above the liquidation threshold.";
+    action.style.display = "none";
+  }
+}
+
+// ── WALLET ────────────────────────────────────────────────────────────────────
+async function connectWallet() {
+  if (!window.ethereum) return showStatus("No wallet detected", "err");
+  try {
+    await loadABIs();
+    provider = new ethers.BrowserProvider(window.ethereum);
+    const network = await provider.getNetwork();
+    if (network.chainId !== CHAIN_ID) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: CHAIN_HEX }]
+        });
+        provider = new ethers.BrowserProvider(window.ethereum);
+      } catch (e) {
+        return showStatus(`Please switch to ${CHAIN_NAME} (chain ${CHAIN_ID})`, "err");
+      }
+    }
+    signer  = await provider.getSigner();
+    account = await signer.getAddress();
+    vault   = new ethers.Contract(VAULT_ADDR, VAULT_ABI, signer);
+    token   = new ethers.Contract(TOKEN_ADDR, TOKEN_ABI, signer);
+    oracle  = new ethers.Contract(ORACLE_ADDR, ORACLE_ABI, provider);
+    document.getElementById("walletBtn").textContent =
+      account.slice(0,6) + "…" + account.slice(-4);
+    document.getElementById("connectedAddr").textContent =
+      account.slice(0,8) + "…" + account.slice(-6);
+    await refreshAll();
+    setInterval(refreshAll, 20000);
+  } catch(e) {
+    showStatus(e.message || "Connection failed", "err");
+  }
+}
+
+// ── REFRESH ───────────────────────────────────────────────────────────────────
+async function refreshAll() {
+  await Promise.all([refreshOracle(), refreshVault(), refreshSystem(), refreshStabilityPool()]);
+}
+
+async function refreshOracle() {
+  try {
+    const [currentPrice, marketPrice, divergenceBps, inConfirmation,
+           confirmTimeRemaining, targetPrice, spotWarningActive, spotLiquidationEnabled]
+      = await oracle.getPriceStatus();
+
+    const twapStr  = fmtPLSPrice(currentPrice);
+    const spotStr  = marketPrice > ZERO ? fmtPLSPrice(marketPrice) : "—";
+    const divBps   = Number(divergenceBps);
+
+    document.getElementById("oTwap").textContent = twapStr;
+    document.getElementById("oSpot").textContent = spotStr;
+    document.getElementById("oDivergence").textContent = (divBps / 100).toFixed(2) + "%";
+    document.getElementById("oDivSub").textContent = divBps > 500
+      ? "⚠ Large divergence"
+      : divBps > 300 ? "Moderate divergence" : "Normal";
+
+    let stateStr = "Healthy";
+    let stateSub = "TWAP current";
+    if (inConfirmation) { stateStr = "Confirming"; stateSub = "Price update pending"; }
+    if (spotLiquidationEnabled) { stateStr = "Spot Liq Active (clamped ±15%)"; stateSub = "Liquidations use clamped spot"; }
+    document.getElementById("oState").textContent = stateStr;
+    document.getElementById("oStateSub").textContent = stateSub;
+    document.getElementById("oState").className =
+      "val " + (spotLiquidationEnabled ? "danger" : inConfirmation ? "amber" : "safe");
+
+    const confRow = document.getElementById("oConfRow");
+    if (inConfirmation) {
+      confRow.style.display = "block";
+      document.getElementById("oTarget").textContent = fmtPLSPrice(targetPrice);
+      document.getElementById("oConfTime").textContent = fmtSecs(Number(confirmTimeRemaining));
+    } else {
+      confRow.style.display = "none";
+    }
+
+    // Spot warning banner
+    const banner = document.getElementById("spotWarnBanner");
+    const warnDot = document.getElementById("warnDot");
+    const warnText = document.getElementById("warnText");
+    if (spotLiquidationEnabled) {
+      banner.className = "danger";
+      warnDot.className = "pulse-dot red";
+      const elapsed = await oracle.spotWarningElapsed();
+      warnText.innerHTML = `<strong>SPOT LIQUIDATION ACTIVE</strong> — Spot has been 5%+ below TWAP for ${fmtSecs(Number(elapsed))}. Liquidations use spot clamped to within 15% of TWAP.`;
+    } else if (spotWarningActive) {
+      banner.className = "warn";
+      warnDot.className = "pulse-dot amber";
+      const elapsed = await oracle.spotWarningElapsed();
+      const remaining = 5400 - Number(elapsed);
+      warnText.innerHTML = `<strong>SPOT WARNING ACTIVE</strong> — Spot 5%+ below TWAP for ${fmtSecs(Number(elapsed))}. Liquidation enables in ${fmtSecs(remaining > 0 ? remaining : 0)}.`;
+    } else {
+      banner.className = "";
+    }
+
+    // Oracle bar
+    const oBar = document.getElementById("obDot");
+    const oLabel = document.getElementById("obLabel");
+    const oPrice = document.getElementById("obPrice");
+    const oSub = document.getElementById("obSub");
+    oPrice.textContent = twapStr;
+    if (spotLiquidationEnabled) {
+      oBar.className = "ob-dot red";
+      oLabel.textContent = "Spot Liquidation Active";
+      oSub.textContent = "Spot: " + spotStr;
+    } else if (spotWarningActive) {
+      oBar.className = "ob-dot amber";
+      oLabel.textContent = "Spot Warning";
+      oSub.textContent = "Spot: " + spotStr;
+    } else if (inConfirmation) {
+      oBar.className = "ob-dot amber";
+      oLabel.textContent = "Oracle Confirming";
+      oSub.textContent = "";
+    } else {
+      oBar.className = "ob-dot green";
+      oLabel.textContent = "Oracle Healthy";
+      oSub.textContent = "";
+    }
+  } catch(e) {
+    document.getElementById("obLabel").textContent = "Oracle error";
+  }
+}
+
+async function refreshVault() {
+  if (!account) return;
+  try {
+    const [collateral, debt, collateralUSD, ratio, mintable, oracleHealthy,
+           price, systemRatio, spotLiquidationActive] = await vault.vaultInfo(account);
+
+    const tokenBal = await token.balanceOf(account);
+    const repayNeeded = await vault.repayToHealth(account);
+    const vCap = await vault.vaultCap();
+
+    // Try WPLS balance (wpls address from vault)
+    try {
+      const wplsAddr = await vault.wpls();
+      const wplsContract = new ethers.Contract(wplsAddr, [
+        {"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}
+      ], provider);
+      const wplsBal = await wplsContract.balanceOf(account);
+      document.getElementById("wplsBalance").textContent = fmt18(wplsBal) + " WPLS";
+    } catch(_) {}
+
+    document.getElementById("sColl").textContent   = fmt18(collateral) + " PLS";
+    document.getElementById("sDebt").textContent   = fmt18(debt) + " pSunDAI";
+    document.getElementById("sColUSD").textContent = fmtUSD(collateralUSD);
+    document.getElementById("sBalance").textContent= fmt18(tokenBal) + " pSunDAI";
+    document.getElementById("sMintable").textContent = fmt18(mintable) + " pSunDAI";
+    document.getElementById("mintableHint").textContent = fmt18(mintable) + " pSunDAI";
+    document.getElementById("repayBalHint").textContent = fmt18(tokenBal) + " pSunDAI";
+    document.getElementById("sVaultCap").textContent = fmt18(vCap) + " pSunDAI";
+    document.getElementById("vaultCapHint").textContent = fmt18(vCap) + " pSunDAI (max debt per vault)";
+
+    const repayStr = repayNeeded > ZERO ? fmt18(repayNeeded) + " pSunDAI" : "Safe ✓";
+    document.getElementById("sRepayToSafe").textContent = repayStr;
+
+    // Show/hide the "Repay to Safe" helper row in the Repay tab
+    const safeRow = document.getElementById("repayToSafeRow");
+    if (repayNeeded > ZERO) {
+      document.getElementById("toSafeAmt").textContent = fmt18(repayNeeded);
+      safeRow.style.display = "block";
+    } else {
+      safeRow.style.display = "none";
+    }
+
+    // Max safe withdraw calculation
+    let maxWd = ZERO;
+    if (debt === ZERO) {
+      maxWd = collateral;
+    } else if (price > ZERO) {
+      const minColl = (debt * 150n * ethers.parseUnits("1", 18)) / (100n * price);
+      maxWd = collateral > minColl ? collateral - minColl : ZERO;
+    }
+    document.getElementById("maxWithdrawHint").textContent = fmt18(maxWd) + " PLS";
+    // Store for setMaxWithdraw
+    window._maxWithdraw = maxWd;
+
+    // PLS wallet balance
+    try {
+      const plsBal = await provider.getBalance(account);
+      const plsStr = fmt18(plsBal) + " PLS";
+      document.getElementById("plsWalletBal").textContent = plsStr;
+      document.getElementById("plsWalletBalDep").textContent = plsStr;
+      window._plsWalletBal = plsBal;
+    } catch(_) {}
+
+    const crStr = fmtCR(ratio);
+    document.getElementById("sCR").textContent = crStr;
+    const col = crColor(ratio);
+    document.getElementById("sCR").className = "sr-val " + col;
+    document.getElementById("sDebt").className = "s-val " + (debt > ZERO ? "amber" : "gold");
+
+    // CR bar
+    let pct = 0;
+    if (ratio !== ethers.MaxUint256 && ratio <= 9999n) {
+      pct = Math.min(Number(ratio) / 2.5, 100); // 250% = 100%
+    } else {
+      pct = 100;
+    }
+    const fill = document.getElementById("crFill");
+    fill.style.width = pct + "%";
+    const n = Number(ratio);
+    fill.style.background = n < 110 ? "var(--danger)" : n < 150 ? "var(--warn)" : "var(--safe)";
+
+    updateHealthBanner(collateral, debt, ratio, repayNeeded);
+
+    document.getElementById("repayBalHint").textContent = fmt18(tokenBal) + " pSunDAI";
+  } catch(e) {
+    console.error("refreshVault:", e);
+  }
+}
+
+async function refreshSystem() {
+  try {
+    const [totColl, totDebt, surplus, badDebt, equity, health, ceiling, maxSafeDebt, spDeposits, spCollateral] = await Promise.all([
+      vault.totalCollateral(),
+      vault.totalDebt(),
+      vault.surplusBuffer(),
+      vault.badDebtAccumulated(),
+      vault.systemEquity(),
+      vault.systemHealth(),
+      vault.effectiveDebtCeiling(),
+      oracle.maxSafeDebt(),
+      vault.totalStabilityDeposits(),
+      vault.stabilityPoolCollateral(),
+    ]);
+
+    document.getElementById("sysTotColl").textContent = fmt18(totColl) + " PLS";
+    document.getElementById("sysTotDebt").textContent = fmt18(totDebt) + " pSunDAI";
+    document.getElementById("sysMaxSafeDebt").textContent = fmtUSD(maxSafeDebt);
+
+    const healthN = Number(health);
+    const healthEl = document.getElementById("sysHealth");
+    healthEl.textContent = healthN > 9999 ? "∞" : healthN.toFixed(1) + "%";
+    healthEl.className = "sr-val " + (healthN > 175 ? "green" : healthN > 130 ? "amber" : "red");
+
+    document.getElementById("sysSPDeposits").textContent = fmt18(spDeposits) + " pSunDAI";
+    document.getElementById("sysSPCollateral").textContent = fmt18(spCollateral) + " PLS";
+
+    document.getElementById("sysSurplus").textContent = fmt18(surplus) + " pSunDAI";
+
+    const badEl = document.getElementById("sysBadDebt");
+    badEl.textContent = fmt18(badDebt) + " pSunDAI";
+    badEl.className = "sr-val " + (badDebt > ZERO ? "red" : "green");
+
+    const eqEl = document.getElementById("sysEquity");
+    const eqN = Number(ethers.formatUnits(equity >= 0n ? equity : -equity, 18));
+    eqEl.textContent = (equity >= 0n ? "+" : "-") + eqN.toFixed(2) + " pSunDAI";
+    eqEl.className = "sr-val " + (equity >= 0n ? "green" : "red");
+
+    // "ceiling" here is the effective ceiling (min of static DEBT_CEILING and
+    // the oracle's dynamic maxSafeDebt) — the real day-to-day constraint.
+    const pct = ceiling > ZERO ? Number((totDebt * 100n) / ceiling) : 0;
+    document.getElementById("debtCeilPct").textContent = pct.toFixed(1) + "%";
+    document.getElementById("debtCeilAbs").textContent =
+      fmt18(totDebt) + " / " + fmt18(ceiling) + " pSunDAI";
+    const bar = document.getElementById("debtCeilBar");
+    bar.style.width = Math.min(pct, 100) + "%";
+    bar.style.background = pct > 90 ? "var(--danger)" : pct > 70 ? "var(--warn)" : "var(--safe)";
+  } catch(e) {
+    console.error("refreshSystem:", e);
+  }
+}
+
+// ── STABILITY POOL ────────────────────────────────────────────────────────────
+async function refreshStabilityPool() {
+  if (!account) return;
+  try {
+    const [compounded, gain, tokenBal] = await Promise.all([
+      vault.getCompoundedStabilityDeposit(account),
+      vault.getDepositorCollateralGain(account),
+      token.balanceOf(account),
+    ]);
+    document.getElementById("spMyDeposit").textContent = fmt18(compounded) + " pSunDAI";
+    document.getElementById("spMyGain").textContent = fmt18(gain) + " PLS";
+    document.getElementById("spWalletBalHint").textContent = fmt18(tokenBal) + " pSunDAI";
+    document.getElementById("spWithdrawHint").textContent = fmt18(compounded) + " pSunDAI";
+    document.getElementById("spClaimHint").textContent = fmt18(gain) + " PLS";
+    window._spCompounded = compounded;
+    window._spTokenBal = tokenBal;
+
+    const [totalDeposits, totalCollateralHeld] = await vault.getStabilityPoolStats();
+    document.getElementById("spTotalDeposits").textContent = fmt18(totalDeposits) + " pSunDAI";
+    document.getElementById("spTotalCollateral").textContent = fmt18(totalCollateralHeld) + " PLS";
+  } catch(e) {
+    console.error("refreshStabilityPool:", e);
+  }
+}
+
+function setMaxSPProvide() {
+  const bal = window._spTokenBal;
+  if (!bal) return;
+  document.getElementById("spProvideAmt").value = ethers.formatUnits(bal, 18);
+}
+
+function setMaxSPWithdraw() {
+  const c = window._spCompounded;
+  if (!c) return;
+  document.getElementById("spWithdrawAmt").value = ethers.formatUnits(c, 18);
+}
+
+function showSPStatus(msg, type) {
+  const el = document.getElementById("spStatusMsg");
+  el.textContent = msg;
+  el.className = type;
+  if (type === "ok") setTimeout(() => { el.className = ""; }, 5000);
+}
+
+async function doProvideSP() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("spProvideAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showSPStatus("Enter pSunDAI amount", "err");
+  try {
+    const parsed = ethers.parseUnits(amt, 18);
+    showSPStatus("Approving pSunDAI…", "wait");
+    const appTx = await token.approve(VAULT_ADDR, parsed);
+    await appTx.wait();
+    showSPStatus("Depositing into Stability Pool…", "wait");
+    const tx = await vault.provideToStabilityPool(parsed);
+    await tx.wait();
+    showSPStatus("Deposited into Stability Pool.", "ok");
+    await Promise.all([refreshStabilityPool(), refreshVault()]);
+  } catch(e) { showSPStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doWithdrawSP() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("spWithdrawAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showSPStatus("Enter pSunDAI amount", "err");
+  try {
+    showSPStatus("Withdrawing from Stability Pool…", "wait");
+    const tx = await vault.withdrawFromStabilityPool(ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showSPStatus("Withdrawn. Any pending PLS gain was sent to you too.", "ok");
+    await Promise.all([refreshStabilityPool(), refreshVault()]);
+  } catch(e) { showSPStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doClaimSP() {
+  if (!ensureWallet()) return;
+  try {
+    showSPStatus("Claiming collateral gain…", "wait");
+    const tx = await vault.claimCollateralGain();
+    await tx.wait();
+    showSPStatus("Gain claimed.", "ok");
+    await refreshStabilityPool();
+  } catch(e) { showSPStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+// ── AUTO MINT PREVIEW ─────────────────────────────────────────────────────────
+async function previewAuto() {
+  const amt = parseFloat(document.getElementById("autoAmt").value) || 0;
+  if (amt <= 0 || !oracle) {
+    document.getElementById("autoPreview").textContent = "Enter PLS amount to preview";
+    document.getElementById("autoMintPreview").textContent = "0";
+    return;
+  }
+  try {
+    const [twap] = await oracle.getPriceStatus();
+    const plsIn = ethers.parseUnits(amt.toString(), 18);
+    const valueUSD = (plsIn * twap) / ethers.parseUnits("1", 18);
+    const mintAmt = (valueUSD * 100n) / 155n;
+    document.getElementById("autoMintPreview").textContent = fmt18(mintAmt);
+    document.getElementById("autoPreview").textContent =
+      `Deposit ${amt} PLS → mint ~${fmt18(mintAmt)} pSunDAI at 155% CR`;
+  } catch(_) {}
+}
+
+async function previewMint() {
+  if (!vault || !account) return;
+  try {
+    const amt = parseFloat(document.getElementById("mintAmt").value) || 0;
+    if (amt <= 0) { document.getElementById("afterMintCR").textContent = "—"; return; }
+    const [collateral, debt,,, ,, price] = await vault.vaultInfo(account);
+    const newDebt = debt + ethers.parseUnits(amt.toString(), 18);
+    if (newDebt === ZERO) { document.getElementById("afterMintCR").textContent = "∞"; return; }
+    const newCR = (collateral * price * 100n) / (newDebt * ethers.parseUnits("1", 18));
+    document.getElementById("afterMintCR").textContent = fmtCR(newCR);
+  } catch(_) {}
+}
+
+async function setMaxMint() {
+  if (!vault || !account) return;
+  try {
+    const m = await vault.maxMint(account);
+    document.getElementById("mintAmt").value = ethers.formatUnits(m, 18);
+    await previewMint();
+  } catch(_) {}
+}
+
+async function setMaxRepay() {
+  if (!token || !account) return;
+  try {
+    const [,debt] = await vault.vaultInfo(account);
+    const bal = await token.balanceOf(account);
+    const max = debt < bal ? debt : bal;
+    document.getElementById("repayAmt").value = ethers.formatUnits(max, 18);
+    await previewRepay();
+  } catch(_) {}
+}
+
+async function setRepayToSafe() {
+  if (!vault || !account) return;
+  try {
+    const needed = await vault.repayToHealth(account);
+    if (needed === ZERO) return showStatus("Vault is already safe (CR ≥ 150%)", "ok");
+    document.getElementById("repayAmt").value = ethers.formatUnits(needed, 18);
+    await previewRepay();
+  } catch(_) {}
+}
+
+async function previewRepay() {
+  if (!vault || !account) return;
+  const amt = parseFloat(document.getElementById("repayAmt").value) || 0;
+  const el = document.getElementById("afterRepayCR");
+  if (amt <= 0) { el.textContent = "—"; return; }
+  try {
+    const [collateral, debt,,,,, price] = await vault.vaultInfo(account);
+    const repayVal = ethers.parseUnits(amt.toString(), 18);
+    const newDebt = debt > repayVal ? debt - repayVal : ZERO;
+    if (newDebt === ZERO) { el.textContent = "∞ (debt cleared)"; return; }
+    const newCR = (collateral * price * 100n) / (newDebt * ethers.parseUnits("1", 18));
+    el.textContent = fmtCR(newCR);
+    el.style.color = Number(newCR) >= 150 ? "var(--safe)" : Number(newCR) >= 110 ? "var(--warn)" : "var(--danger)";
+  } catch(_) { el.textContent = "—"; }
+}
+
+async function setMaxWithdraw() {
+  document.getElementById("withPLSAmt").value =
+    ethers.formatUnits(window._maxWithdraw || ZERO, 18);
+  await previewWithdraw();
+}
+
+async function setMaxWithdrawWPLS() {
+  document.getElementById("withWPLSAmt").value =
+    ethers.formatUnits(window._maxWithdraw || ZERO, 18);
+}
+
+async function previewWithdraw() {
+  if (!vault || !account) return;
+  const amt = parseFloat(document.getElementById("withPLSAmt").value) || 0;
+  const el = document.getElementById("afterWithdrawCR");
+  if (amt <= 0) { el.textContent = "—"; return; }
+  try {
+    const [collateral, debt,,,,, price] = await vault.vaultInfo(account);
+    if (debt === ZERO) { el.textContent = "No debt — CR ∞"; return; }
+    const wdVal = ethers.parseUnits(amt.toString(), 18);
+    const newColl = collateral > wdVal ? collateral - wdVal : ZERO;
+    const newCR = (newColl * price * 100n) / (debt * ethers.parseUnits("1", 18));
+    el.textContent = fmtCR(newCR);
+    el.style.color = Number(newCR) >= 150 ? "var(--safe)" : Number(newCR) >= 110 ? "var(--warn)" : "var(--danger)";
+  } catch(_) { el.textContent = "—"; }
+}
+
+async function setMaxAutoMint() {
+  const bal = window._plsWalletBal;
+  if (!bal) return;
+  const gasBuffer = ethers.parseUnits("2000", 18);
+  const max = bal > gasBuffer ? bal - gasBuffer : ZERO;
+  document.getElementById("autoAmt").value = ethers.formatUnits(max, 18);
+  await previewAuto();
+}
+
+async function setMaxDepositPLS() {
+  const bal = window._plsWalletBal;
+  if (!bal) return;
+  const gasBuffer = ethers.parseUnits("2000", 18);
+  const max = bal > gasBuffer ? bal - gasBuffer : ZERO;
+  document.getElementById("depPLSAmt").value = ethers.formatUnits(max, 18);
+}
+
+async function setMaxWPLS() {
+  if (!vault || !account) return;
+  try {
+    const wplsAddr = await vault.wpls();
+    const wplsContract = new ethers.Contract(wplsAddr, [
+      {"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}
+    ], provider);
+    const bal = await wplsContract.balanceOf(account);
+    document.getElementById("depWPLSAmt").value = ethers.formatUnits(bal, 18);
+  } catch(_) {}
+}
+
+// ── STATUS ────────────────────────────────────────────────────────────────────
+function showStatus(msg, type) {
+  const el = document.getElementById("statusMsg");
+  el.textContent = msg;
+  el.className = type;
+  if (type === "ok") setTimeout(() => { el.className = ""; }, 5000);
+}
+
+// ── ENSURE WALLET ─────────────────────────────────────────────────────────────
+function ensureWallet() {
+  if (!signer) { showStatus("Connect wallet first", "err"); return false; }
+  return true;
+}
+
+// ── ACTIONS ───────────────────────────────────────────────────────────────────
+async function doAutoMint() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("autoAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter PLS amount", "err");
+  try {
+    showStatus("Sending transaction…", "wait");
+    const tx = await vault.depositAndAutoMintPLS({ value: ethers.parseUnits(amt, 18) });
+    showStatus("Pending: " + tx.hash.slice(0,10) + "…", "wait");
+    const receipt = await tx.wait();
+
+    // The deposit always succeeds, but the dynamic debt ceiling / per-vault cap
+    // can cause the contract to silently skip the mint (emits DebtCeilingReached
+    // instead of Mint) while the transaction itself still succeeds. Check which
+    // event actually fired instead of assuming the mint happened.
+    let minted = false, capped = false;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = vault.interface.parseLog(log);
+        if (parsed?.name === "Mint") minted = true;
+        if (parsed?.name === "DebtCeilingReached") capped = true;
+      } catch(_) {} // not a vault event this ABI recognizes — ignore
+    }
+
+    if (minted) {
+      showStatus("Done! PLS deposited and pSunDAI minted.", "ok");
+    } else if (capped) {
+      showStatus("PLS deposited, but auto-mint was skipped — the dynamic debt ceiling or vault cap is currently reached. Your PLS is safely in your vault as collateral; try Borrow More later once capacity frees up.", "err");
+    } else {
+      showStatus("PLS deposited.", "ok");
+    }
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doDepositPLS() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("depPLSAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter PLS amount", "err");
+  try {
+    showStatus("Sending transaction…", "wait");
+    const tx = await vault.depositPLS({ value: ethers.parseUnits(amt, 18) });
+    showStatus("Pending: " + tx.hash.slice(0,10) + "…", "wait");
+    await tx.wait();
+    showStatus("PLS deposited.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doDepositWPLS() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("depWPLSAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter WPLS amount", "err");
+  try {
+    const wplsAddr = await vault.wpls();
+    const wplsContract = new ethers.Contract(wplsAddr, [
+      {"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"type":"bool"}],"stateMutability":"nonpayable","type":"function"}
+    ], signer);
+    showStatus("Approving WPLS…", "wait");
+    const parsed = ethers.parseUnits(amt, 18);
+    const appTx = await wplsContract.approve(VAULT_ADDR, parsed);
+    await appTx.wait();
+    showStatus("Depositing WPLS…", "wait");
+    const tx = await vault.deposit(parsed);
+    await tx.wait();
+    showStatus("WPLS deposited.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doMint() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("mintAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter pSunDAI amount", "err");
+  try {
+    showStatus("Sending transaction…", "wait");
+    const tx = await vault.mint(ethers.parseUnits(amt, 18));
+    showStatus("Pending: " + tx.hash.slice(0,10) + "…", "wait");
+    await tx.wait();
+    showStatus("pSunDAI minted.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doRepay() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("repayAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter pSunDAI amount", "err");
+  try {
+    // pSunDAI vault uses onlyVault burn(from, amount) — no token approval needed
+    showStatus("Repaying…", "wait");
+    const tx = await vault.repay(ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showStatus("Repaid.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doRepayToSafe() {
+  if (!ensureWallet()) return;
+  try {
+    const needed = await vault.repayToHealth(account);
+    if (needed === ZERO) return showStatus("Vault is already safe (CR ≥ 150%)", "ok");
+    showStatus(`Repaying ${fmt18(needed)} pSunDAI to restore 150% CR…`, "wait");
+    const tx = await vault.repay(needed);
+    await tx.wait();
+    showStatus("Vault restored to safe CR.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doRepayAndWithdraw() {
+  if (!ensureWallet()) return;
+  try {
+    const [,debt] = await vault.vaultInfo(account);
+    const bal = await token.balanceOf(account);
+    const repayAmt = debt < bal ? debt : bal;
+    if (repayAmt === ZERO) return showStatus("No debt to repay", "err");
+    // pSunDAI vault uses onlyVault burn(from, amount) — no token approval needed
+    showStatus("Repaying and withdrawing…", "wait");
+    const tx = await vault.repayAndAutoWithdraw(repayAmt);
+    await tx.wait();
+    showStatus("Position closed. PLS returned.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doWithdrawPLS() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("withPLSAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter PLS amount", "err");
+  try {
+    showStatus("Sending transaction…", "wait");
+    const tx = await vault.withdrawPLS(ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showStatus("PLS withdrawn.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+async function doWithdrawWPLS() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("withWPLSAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter WPLS amount", "err");
+  try {
+    showStatus("Sending transaction…", "wait");
+    const tx = await vault.withdrawWPLS(ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showStatus("WPLS withdrawn.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Transaction failed", "err"); }
+}
+
+// ── PROTOCOL TOOLS ────────────────────────────────────────────────────────────
+async function doReconcile() {
+  if (!ensureWallet()) return;
+  try {
+    showStatus("Reconciling…", "wait");
+    const tx = await vault.reconcile();
+    await tx.wait();
+    showStatus("Reconciled.", "ok");
+    await refreshSystem();
+  } catch(e) { showStatus(e.reason || e.message || "Failed", "err"); }
+}
+
+async function doPoke() {
+  if (!ensureWallet()) return;
+  try {
+    const canPoke = await oracle.connect(signer).canPoke();
+    if (!canPoke) {
+      const t = await oracle.timeUntilNextPoke();
+      return showStatus(`Poke cooldown — ${fmtSecs(Number(t))} remaining`, "err");
+    }
+    showStatus("Poking oracle…", "wait");
+    const tx = await oracle.connect(signer).poke();
+    await tx.wait();
+    showStatus("Oracle poked.", "ok");
+    await refreshOracle();
+  } catch(e) { showStatus(e.reason || e.message || "Failed", "err"); }
+}
+
+async function doClearBadDebt() {
+  if (!ensureWallet()) return;
+  const addr = document.getElementById("badDebtAddr").value.trim();
+  const amt = document.getElementById("badDebtAmt").value;
+  if (!ethers.isAddress(addr)) return showStatus("Invalid address", "err");
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter pSunDAI amount to repay", "err");
+  try {
+    showStatus("Repaying and claiming pro-rata PLS…", "wait");
+    const tx = await vault.clearBadDebt(addr, ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showStatus("Done. Pro-rata PLS sent to you.", "ok");
+    await refreshAll();
+  } catch(e) { showStatus(e.reason || e.message || "Failed", "err"); }
+}
+
+async function doSettle() {
+  if (!ensureWallet()) return;
+  const amt = document.getElementById("settleAmt").value;
+  if (!amt || parseFloat(amt) <= 0) return showStatus("Enter amount", "err");
+  try {
+    // pSunDAI vault uses onlyVault burn(from, amount) — no token approval needed
+    showStatus("Settling debt…", "wait");
+    const tx = await vault.settleDebt(ethers.parseUnits(amt, 18));
+    await tx.wait();
+    showStatus("Debt settled.", "ok");
+    await refreshSystem();
+  } catch(e) { showStatus(e.reason || e.message || "Failed", "err"); }
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
