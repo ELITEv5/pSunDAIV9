@@ -965,6 +965,33 @@ async function loadABIs() {
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let provider, signer, account;
 let vault, token, oracle;
+
+const PULSECHAIN_RPCS = [
+  "https://rpc.pulsechain.com",
+  "https://rpc-pulsechain.g4mm4.io",
+  "https://pulsechain.publicnode.com"
+];
+async function createPulsechainProvider() {
+  for (const url of PULSECHAIN_RPCS) {
+    try {
+      const p = new ethers.JsonRpcProvider(url);
+      await p.getBlockNumber();
+      return p;
+    } catch (e) { /* try next endpoint */ }
+  }
+  throw new Error("All PulseChain RPC endpoints unreachable");
+}
+
+// ── READ-ONLY INIT — populates public dashboard stats without a wallet ─────────
+window.addEventListener("load", async () => {
+  try {
+    const roProvider = await createPulsechainProvider();
+    vault  = new ethers.Contract(VAULT_ADDR, VAULT_ABI, roProvider);
+    oracle = new ethers.Contract(ORACLE_ADDR, ORACLE_ABI, roProvider);
+    await Promise.all([refreshOracle(), refreshSystem()]);
+    setInterval(() => { if (!account) Promise.all([refreshOracle(), refreshSystem()]); }, 30000);
+  } catch (e) { console.warn("Read-only init failed:", e.message); }
+});
 const ZERO = 0n;
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
